@@ -1,0 +1,36 @@
+{
+  "id": "/",
+  "name": "RemindUp Personal Planner",
+  "short_name": "RemindUp",
+  "description": "Lịch, công việc, ghi chú và tập trung trong một không gian cá nhân.",
+  "lang": "vi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f6f1",
+  "theme_color": "#17251e",
+  "orientation": "any",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Tạo công việc",
+      "short_name": "Tạo task",
+      "url": "/?new=task",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Xem hôm nay",
+      "short_name": "Hôm nay",
+      "url": "/",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ]
+}
