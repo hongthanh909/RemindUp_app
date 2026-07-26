@@ -1337,6 +1337,54 @@ select:focus-visible {
   flex: 0 0 auto;
 }
 
+.checklist-preview {
+  display: grid;
+  gap: 7px;
+  margin: -4px 0 12px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--bg);
+}
+
+.checklist-preview button {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.checklist-preview button:hover {
+  background: var(--panel);
+}
+
+.checklist-preview button.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.checklist-preview button span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--panel);
+}
+
+.checklist-preview button.done span {
+  background: var(--accent);
+  color: #172018;
+}
+
 .modal-actions {
   display: grid;
   grid-template-columns: auto 1fr auto auto;

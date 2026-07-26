@@ -830,6 +830,9 @@ function TaskModal({ task, tasks, close, saved }: {
   const [priority, setPriority] = useState<Priority>(task?.priority ?? "medium");
   const [category, setCategory] = useState(task?.category ?? "Cá nhân");
   const [checklistText, setChecklistText] = useState(task?.checklist.map((item) => item.label).join("\n") ?? "");
+  const [doneChecklistLabels, setDoneChecklistLabels] = useState<Set<string>>(
+    () => new Set(task?.checklist.filter((item) => item.done).map((item) => item.label) ?? []),
+  );
   const [reminderMinutes, setReminderMinutes] = useState(String(task?.reminderMinutes ?? 15));
   const [notice, setNotice] = useState("");
   const [allowConflict, setAllowConflict] = useState(false);
@@ -858,12 +861,15 @@ function TaskModal({ task, tasks, close, saved }: {
       return;
     }
     const timestamp = new Date().toISOString();
-    const existingByLabel = new Map(task?.checklist.map((item) => [item.label, item]) ?? []);
     const checklist = checklistText
       .split("\n")
       .map((label) => label.trim())
       .filter(Boolean)
-      .map((label) => existingByLabel.get(label) ?? { id: crypto.randomUUID(), label, done: false });
+      .map((label) => ({
+        id: task?.checklist.find((item) => item.label === label)?.id ?? crypto.randomUUID(),
+        label,
+        done: doneChecklistLabels.has(label),
+      }));
     const done = checklist.filter((item) => item.done).length;
     const checklistProgress = checklist.length ? Math.round((done / checklist.length) * 100) : task?.progress ?? 0;
     const row: PlannerTask = {
@@ -924,6 +930,28 @@ function TaskModal({ task, tasks, close, saved }: {
             <label className="form-field"><span>Nhắc trước</span><select value={reminderMinutes} onChange={(event) => setReminderMinutes(event.target.value)}><option value="5">5 phút</option><option value="15">15 phút</option><option value="30">30 phút</option><option value="60">1 giờ</option><option value="1440">1 ngày</option></select></label>
           </div>
           <label className="form-field full"><span>Checklist <small>(mỗi dòng một mục)</small></span><textarea value={checklistText} onChange={(event) => setChecklistText(event.target.value)} placeholder={"Đọc chương 1\nLàm đề thử\nXem lại ghi chú"} /></label>
+          {checklistText.trim() && (
+            <div className="checklist-preview" aria-label="Tiến độ checklist">
+              {checklistText.split("\n").map((label) => label.trim()).filter(Boolean).map((label) => {
+                const done = doneChecklistLabels.has(label);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    className={done ? "done" : ""}
+                    onClick={() => setDoneChecklistLabels((current) => {
+                      const next = new Set(current);
+                      if (next.has(label)) next.delete(label);
+                      else next.add(label);
+                      return next;
+                    })}
+                  >
+                    <span>{done ? <Check size={14} /> : <Circle size={15} />}</span>{label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {notice && <div className="form-notice"><AlarmClock size={18} /><span>{notice}</span></div>}
           <div className="modal-actions">
             {task && <button className="danger-button" type="button" onClick={remove}><Trash2 size={17} /> Xóa</button>}
