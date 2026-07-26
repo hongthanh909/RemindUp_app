@@ -15,6 +15,17 @@ export type ChecklistItem = {
   done: boolean;
 };
 
+export type RepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "yearly";
+
+export type RepeatRule = {
+  frequency: RepeatFrequency;
+  interval: number;
+  weekdays: number[];
+  endType: "never" | "date" | "count";
+  endDate: string | null;
+  count: number | null;
+};
+
 export type PlannerTask = {
   id: string;
   title: string;
@@ -29,6 +40,8 @@ export type PlannerTask = {
   tags: string[];
   checklist: ChecklistItem[];
   reminderMinutes: number | null;
+  timezone?: string;
+  repeatRule?: RepeatRule;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -42,6 +55,7 @@ export type PlannerNote = {
   tags: string[];
   isPinned: boolean;
   imageData?: string;
+  thumbnailData?: string;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -119,6 +133,8 @@ export async function seedPlanner() {
           { id: crypto.randomUUID(), label: "Làm đề cũ", done: false },
         ],
         reminderMinutes: 30,
+        timezone: "Asia/Ho_Chi_Minh",
+        repeatRule: { frequency: "none", interval: 1, weekdays: [], endType: "never", endDate: null, count: null },
         createdAt: now,
         updatedAt: now,
         completedAt: null,
@@ -137,6 +153,8 @@ export async function seedPlanner() {
         tags: ["sức khỏe"],
         checklist: [],
         reminderMinutes: 15,
+        timezone: "Asia/Ho_Chi_Minh",
+        repeatRule: { frequency: "weekly", interval: 1, weekdays: [6], endType: "never", endDate: null, count: null },
         createdAt: now,
         updatedAt: now,
         completedAt: null,
@@ -155,6 +173,8 @@ export async function seedPlanner() {
         tags: ["deadline"],
         checklist: [],
         reminderMinutes: 60,
+        timezone: "Asia/Ho_Chi_Minh",
+        repeatRule: { frequency: "none", interval: 1, weekdays: [], endType: "never", endDate: null, count: null },
         createdAt: now,
         updatedAt: now,
         completedAt: null,

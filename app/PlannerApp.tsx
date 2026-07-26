@@ -15,6 +15,8 @@ import {
   Flame,
   Home,
   ImagePlus,
+  KeyRound,
+  LockKeyhole,
   Moon,
   MoreHorizontal,
   Pause,
@@ -39,11 +41,12 @@ import {
   type PlannerNote,
   type PlannerTask,
   type Priority,
+  type RepeatFrequency,
   seedPlanner,
 } from "./db";
 
 type View = "home" | "calendar" | "notes" | "settings";
-type Modal = "task" | "note" | null;
+type Modal = "task" | "note" | "security" | null;
 
 const categories = ["Học tập", "Công việc", "Cá nhân", "Sức khỏe", "Tài chính", "Mục tiêu"];
 
@@ -55,8 +58,66 @@ const priorityLabel: Record<Priority, string> = {
 };
 
 const dayNames = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
+const pinStorageKey = "remindup-pin-verifier-v1";
+const repeatLabels: Record<RepeatFrequency, string> = {
+  none: "Không lặp",
+  daily: "Hằng ngày",
+  weekly: "Hằng tuần",
+  monthly: "Hằng tháng",
+  yearly: "Hằng năm",
+};
 
 const pad = (value: number) => String(value).padStart(2, "0");
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return window.btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  return Uint8Array.from(window.atob(value), (character) => character.charCodeAt(0));
+}
+
+async function derivePinVerifier(pin: string, salt: Uint8Array, iterations = 600_000) {
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(pin),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: salt as BufferSource, iterations },
+    material,
+    256,
+  );
+  return bytesToBase64(new Uint8Array(bits));
+}
+
+async function savePinVerifier(pin: string) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iterations = 600_000;
+  const verifier = await derivePinVerifier(pin, salt, iterations);
+  window.localStorage.setItem(
+    pinStorageKey,
+    JSON.stringify({ salt: bytesToBase64(salt), verifier, iterations }),
+  );
+}
+
+async function verifyPin(pin: string) {
+  const stored = window.localStorage.getItem(pinStorageKey);
+  if (!stored) return true;
+  try {
+    const record = JSON.parse(stored) as { salt: string; verifier: string; iterations: number };
+    const actual = await derivePinVerifier(pin, base64ToBytes(record.salt), record.iterations);
+    return actual === record.verifier;
+  } catch {
+    return false;
+  }
+}
 
 function dateKey(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -100,6 +161,72 @@ function useClock() {
   return now;
 }
 
+function canvasToDataUrl(canvas: HTMLCanvasElement, quality: number) {
+  return new Promise<{ dataUrl: string; size: number }>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Không thể xử lý ảnh."));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Không thể đọc ảnh đã xử lý."));
+        reader.onload = () => resolve({ dataUrl: String(reader.result), size: blob.size });
+        reader.readAsDataURL(blob);
+      },
+      "image/webp",
+      quality,
+    );
+  });
+}
+
+async function optimizeImage(file: File) {
+  if (file.size > 15 * 1024 * 1024) {
+    throw new Error("Ảnh cần nhỏ hơn 15 MB.");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("Định dạng ảnh chưa được hỗ trợ."));
+      element.src = objectUrl;
+    });
+
+    const maxEdge = 1920;
+    const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d")?.drawImage(image, 0, 0, width, height);
+
+    let quality = 0.78;
+    let optimized = await canvasToDataUrl(canvas, quality);
+    while (optimized.size > 1.5 * 1024 * 1024 && quality > 0.5) {
+      quality -= 0.08;
+      optimized = await canvasToDataUrl(canvas, quality);
+    }
+
+    const thumbnailScale = Math.min(1, 384 / Math.max(width, height));
+    const thumbnail = document.createElement("canvas");
+    thumbnail.width = Math.max(1, Math.round(width * thumbnailScale));
+    thumbnail.height = Math.max(1, Math.round(height * thumbnailScale));
+    thumbnail
+      .getContext("2d")
+      ?.drawImage(canvas, 0, 0, thumbnail.width, thumbnail.height);
+
+    return {
+      imageData: optimized.dataUrl,
+      thumbnailData: (await canvasToDataUrl(thumbnail, 0.65)).dataUrl,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 function createWeek(anchor: Date) {
   const start = new Date(anchor);
   start.setDate(anchor.getDate() - 3);
@@ -140,13 +267,19 @@ export default function PlannerApp() {
   const [dark, setDark] = useState(() => {
     if (typeof window === "undefined") return false;
     const saved = window.localStorage.getItem("remindup-theme");
-    return saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    return saved === "dark";
   });
   const [clock24, setClock24] = useState(() =>
     typeof window === "undefined" ? true : window.localStorage.getItem("remindup-clock24") !== "false",
   );
   const [showSeconds, setShowSeconds] = useState(() =>
     typeof window === "undefined" ? true : window.localStorage.getItem("remindup-seconds") !== "false",
+  );
+  const [pinConfigured, setPinConfigured] = useState(() =>
+    typeof window === "undefined" ? false : Boolean(window.localStorage.getItem(pinStorageKey)),
+  );
+  const [locked, setLocked] = useState(() =>
+    typeof window === "undefined" ? false : Boolean(window.localStorage.getItem(pinStorageKey)),
   );
   const [focusSeconds, setFocusSeconds] = useState(25 * 60);
   const [focusRunning, setFocusRunning] = useState(false);
@@ -212,6 +345,27 @@ export default function PlannerApp() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    if (!pinConfigured || locked) return;
+    let timer = window.setTimeout(() => setLocked(true), 5 * 60 * 1000);
+    const reset = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setLocked(true), 5 * 60 * 1000);
+    };
+    const lockWhenHidden = () => {
+      if (document.visibilityState === "hidden") setLocked(true);
+    };
+    window.addEventListener("pointerdown", reset);
+    window.addEventListener("keydown", reset);
+    document.addEventListener("visibilitychange", lockWhenHidden);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointerdown", reset);
+      window.removeEventListener("keydown", reset);
+      document.removeEventListener("visibilitychange", lockWhenHidden);
+    };
+  }, [locked, pinConfigured]);
+
   const filteredTasks = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("vi");
     if (!normalized) return tasks;
@@ -268,13 +422,18 @@ export default function PlannerApp() {
   };
 
   const exportData = async () => {
-    const payload = {
-      version: 1,
+    const backup = {
+      version: 2,
       exportedAt: new Date().toISOString(),
+      timezone: "Asia/Ho_Chi_Minh",
       tasks: await db.tasks.toArray(),
       notes: await db.notes.toArray(),
       history: await db.history.toArray(),
     };
+    const checksum = bytesToBase64(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(backup)))),
+    );
+    const payload = { ...backup, checksum };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -290,11 +449,22 @@ export default function PlannerApp() {
     try {
       const parsed = JSON.parse(await file.text()) as {
         version?: number;
+        exportedAt?: string;
+        timezone?: string;
         tasks?: PlannerTask[];
         notes?: PlannerNote[];
+        history?: unknown[];
+        checksum?: string;
       };
-      if (parsed.version !== 1 || !Array.isArray(parsed.tasks) || !Array.isArray(parsed.notes)) {
+      if (![1, 2].includes(parsed.version ?? 0) || !Array.isArray(parsed.tasks) || !Array.isArray(parsed.notes)) {
         throw new Error("invalid");
+      }
+      if (parsed.version === 2) {
+        const { checksum, ...backup } = parsed;
+        const actual = bytesToBase64(
+          new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(backup)))),
+        );
+        if (!checksum || actual !== checksum) throw new Error("checksum");
       }
       await db.transaction("rw", db.tasks, db.notes, async () => {
         await db.tasks.bulkPut(parsed.tasks ?? []);
@@ -328,6 +498,10 @@ export default function PlannerApp() {
         <p>Đang mở không gian của bạn…</p>
       </main>
     );
+  }
+
+  if (locked) {
+    return <LockScreen unlock={() => setLocked(false)} />;
   }
 
   return (
@@ -421,6 +595,9 @@ export default function PlannerApp() {
               importData={importData}
               requestStorage={requestStorage}
               requestNotifications={requestNotifications}
+              pinConfigured={pinConfigured}
+              configurePin={() => setModal("security")}
+              lockNow={() => setLocked(true)}
             />
           )}
         </div>
@@ -453,6 +630,24 @@ export default function PlannerApp() {
             await refresh();
             setModal(null);
             setToast("Đã lưu ghi chú");
+          }}
+        />
+      )}
+      {modal === "security" && (
+        <PinModal
+          configured={pinConfigured}
+          close={() => setModal(null)}
+          saved={() => {
+            setPinConfigured(true);
+            setLocked(false);
+            setModal(null);
+            setToast("Đã bật khóa PIN 6 số");
+          }}
+          removed={() => {
+            setPinConfigured(false);
+            setLocked(false);
+            setModal(null);
+            setToast("Đã tắt khóa PIN");
           }}
         />
       )}
@@ -640,7 +835,7 @@ function TaskCard({ task, toggle, edit }: { task: PlannerTask; toggle: () => voi
       </button>
       <button type="button" className="task-body" onClick={edit}>
         <span className="task-top"><strong>{task.title}</strong><span className={`priority-pill ${task.priority}`}>{priorityLabel[task.priority]}</span></span>
-        <span className="task-meta"><Clock3 size={14} /> {task.startTime}–{task.endTime}<i />{task.category}</span>
+        <span className="task-meta"><Clock3 size={14} /> {task.startTime}–{task.endTime}<i />{task.category}{task.repeatRule && task.repeatRule.frequency !== "none" && <><i />{repeatLabels[task.repeatRule.frequency]}</>}</span>
         {task.progress > 0 && task.progress < 100 && <span className="task-progress"><i style={{ width: `${task.progress}%` }} /></span>}
       </button>
       <button type="button" className="task-more" onClick={edit} aria-label="Chỉnh sửa công việc"><MoreHorizontal size={18} /></button>
@@ -736,7 +931,11 @@ function NotesView({ notes, query, openNote, refresh, setToast }: {
         <div className="note-grid">
           {visible.map((note, index) => (
             <article className={`note-tile note-tone-${index % 4}`} key={note.id}>
-              {note.imageData && <img src={note.imageData} alt="" />}
+              {note.imageData && (
+                // IndexedDB data URLs are already resized and cannot use the server image optimizer.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={note.thumbnailData ?? note.imageData} alt="" />
+              )}
               <div className="note-tile-top"><span>{note.category}</span><button type="button" onClick={() => togglePin(note)} aria-label={note.isPinned ? "Bỏ ghim" : "Ghim ghi chú"}>{note.isPinned ? <Flame size={17} /> : <Tag size={17} />}</button></div>
               <h2>{note.title}</h2><p>{note.content}</p>
               <footer><span>{formatShortDate(note.updatedAt.slice(0, 10))}</span><button type="button" onClick={() => remove(note)} aria-label="Xóa ghi chú"><Trash2 size={16} /></button></footer>
@@ -760,6 +959,9 @@ function SettingsView({
   importData,
   requestStorage,
   requestNotifications,
+  pinConfigured,
+  configurePin,
+  lockNow,
 }: {
   dark: boolean;
   setDark: (value: boolean) => void;
@@ -772,6 +974,9 @@ function SettingsView({
   importData: (file?: File) => void;
   requestStorage: () => void;
   requestNotifications: () => void;
+  pinConfigured: boolean;
+  configurePin: () => void;
+  lockNow: () => void;
 }) {
   return (
     <section>
@@ -787,6 +992,8 @@ function SettingsView({
           <div className="settings-title"><span><ShieldCheck size={20} /></span><div><h2>Dữ liệu & quyền riêng tư</h2><p>Dữ liệu hiện được lưu cục bộ bằng IndexedDB.</p></div></div>
           <button className="setting-action" type="button" onClick={requestStorage}><ShieldCheck size={19} /><span><strong>Bảo vệ lưu trữ</strong><small>Yêu cầu trình duyệt không tự dọn dữ liệu</small></span><ChevronRight size={18} /></button>
           <button className="setting-action" type="button" onClick={requestNotifications}><Bell size={19} /><span><strong>Quyền thông báo</strong><small>Bật nhắc việc khi ứng dụng đang hoạt động</small></span><ChevronRight size={18} /></button>
+          <button className="setting-action" type="button" onClick={configurePin}><KeyRound size={19} /><span><strong>{pinConfigured ? "Đổi hoặc tắt PIN" : "Thiết lập PIN 6 số"}</strong><small>Tự khóa sau 5 phút hoặc khi rời ứng dụng</small></span><ChevronRight size={18} /></button>
+          {pinConfigured && <button className="setting-action" type="button" onClick={lockNow}><LockKeyhole size={19} /><span><strong>Khóa ngay</strong><small>Yêu cầu PIN khi mở lại</small></span><ChevronRight size={18} /></button>}
         </section>
         <section className="settings-card wide">
           <div className="settings-title"><span><ArchiveRestore size={20} /></span><div><h2>Sao lưu & khôi phục</h2><p>Xuất một tệp JSON để chủ động giữ bản sao an toàn.</p></div></div>
@@ -816,6 +1023,153 @@ function SettingToggle({ icon: Icon, label, copy, value, setValue }: {
   );
 }
 
+function LockScreen({ unlock }: { unlock: () => void }) {
+  const [pin, setPin] = useState("");
+  const [attempts, setAttempts] = useState(0);
+  const [blocked, setBlocked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("Nhập PIN 6 số để tiếp tục.");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (blocked || busy) return;
+    if (!/^\d{6}$/.test(pin)) {
+      setMessage("PIN phải gồm đúng 6 chữ số.");
+      return;
+    }
+    setBusy(true);
+    const valid = await verifyPin(pin);
+    setBusy(false);
+    if (valid) {
+      unlock();
+      return;
+    }
+    const nextAttempts = attempts + 1;
+    setPin("");
+    if (nextAttempts >= 5) {
+      setAttempts(0);
+      setBlocked(true);
+      setMessage("Đã nhập sai 5 lần. Vui lòng chờ 30 giây.");
+      window.setTimeout(() => {
+        setBlocked(false);
+        setMessage("Bạn có thể thử lại.");
+      }, 30_000);
+    } else {
+      setAttempts(nextAttempts);
+      setMessage(`PIN chưa đúng. Còn ${5 - nextAttempts} lần trước khi tạm khóa.`);
+    }
+  };
+
+  return (
+    <main className="lock-screen">
+      <section className="lock-card">
+        <span className="lock-mark"><LockKeyhole size={25} /></span>
+        <p className="eyebrow">Không gian riêng tư</p>
+        <h1>RemindUp đang được khóa</h1>
+        <p>{message}</p>
+        <form onSubmit={submit}>
+          <input
+            autoFocus
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={6}
+            value={pin}
+            disabled={blocked || busy}
+            onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            aria-label="PIN 6 số"
+            placeholder="••••••"
+          />
+          <button className="primary-button" type="submit" disabled={blocked || busy}>
+            {busy ? "Đang kiểm tra…" : "Mở khóa"}
+          </button>
+        </form>
+        <small>PIN chỉ khóa giao diện. Backup cloud sẽ dùng khóa mã hóa riêng.</small>
+      </section>
+    </main>
+  );
+}
+
+function PinModal({ configured, close, saved, removed }: {
+  configured: boolean;
+  close: () => void;
+  saved: () => void;
+  removed: () => void;
+}) {
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  const validateCurrent = async () => {
+    if (!configured) return true;
+    if (!/^\d{6}$/.test(currentPin)) {
+      setNotice("Vui lòng nhập PIN hiện tại.");
+      return false;
+    }
+    if (!(await verifyPin(currentPin))) {
+      setNotice("PIN hiện tại chưa đúng.");
+      return false;
+    }
+    return true;
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(newPin)) {
+      setNotice("PIN mới phải gồm đúng 6 chữ số.");
+      return;
+    }
+    if (newPin !== confirmPin) {
+      setNotice("Hai lần nhập PIN mới chưa khớp.");
+      return;
+    }
+    setBusy(true);
+    if (!(await validateCurrent())) {
+      setBusy(false);
+      return;
+    }
+    await savePinVerifier(newPin);
+    setBusy(false);
+    saved();
+  };
+
+  const removePin = async () => {
+    setBusy(true);
+    if (!(await validateCurrent())) {
+      setBusy(false);
+      return;
+    }
+    window.localStorage.removeItem(pinStorageKey);
+    setBusy(false);
+    removed();
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && close()}>
+      <section className="modal-sheet compact" role="dialog" aria-modal="true" aria-labelledby="pin-modal-title">
+        <div className="modal-head"><div><p className="eyebrow">Khóa nhanh giao diện</p><h2 id="pin-modal-title">{configured ? "Quản lý PIN" : "Thiết lập PIN"}</h2></div><button type="button" onClick={close} aria-label="Đóng"><X size={21} /></button></div>
+        <form onSubmit={submit}>
+          {configured && <label className="form-field full"><span>PIN hiện tại</span><input type="password" inputMode="numeric" maxLength={6} value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="••••••" /></label>}
+          <div className="form-grid">
+            <label className="form-field"><span>PIN mới</span><input type="password" inputMode="numeric" maxLength={6} value={newPin} onChange={(event) => setNewPin(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 chữ số" /></label>
+            <label className="form-field"><span>Nhập lại PIN</span><input type="password" inputMode="numeric" maxLength={6} value={confirmPin} onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 chữ số" /></label>
+          </div>
+          <div className="form-notice"><ShieldCheck size={18} /><span>PIN được kiểm tra bằng PBKDF2 với salt riêng và không được lưu dạng rõ. PIN là khóa giao diện, không thay thế recovery key dùng cho backup mã hóa.</span></div>
+          {notice && <div className="form-notice danger-notice"><Bell size={18} /><span>{notice}</span></div>}
+          <div className="modal-actions">
+            {configured && <button className="danger-button" type="button" disabled={busy} onClick={() => void removePin()}><Trash2 size={17} /> Tắt PIN</button>}
+            <span />
+            <button className="secondary-button" type="button" onClick={close}>Hủy</button>
+            <button className="primary-button" type="submit" disabled={busy}>{busy ? "Đang bảo vệ…" : "Lưu PIN"}</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function TaskModal({ task, tasks, close, saved }: {
   task: PlannerTask | null;
   tasks: PlannerTask[];
@@ -834,6 +1188,14 @@ function TaskModal({ task, tasks, close, saved }: {
     () => new Set(task?.checklist.filter((item) => item.done).map((item) => item.label) ?? []),
   );
   const [reminderMinutes, setReminderMinutes] = useState(String(task?.reminderMinutes ?? 15));
+  const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>(task?.repeatRule?.frequency ?? "none");
+  const [repeatInterval, setRepeatInterval] = useState(String(task?.repeatRule?.interval ?? 1));
+  const [repeatWeekdays, setRepeatWeekdays] = useState<Set<number>>(
+    () => new Set(task?.repeatRule?.weekdays ?? []),
+  );
+  const [repeatEndType, setRepeatEndType] = useState<"never" | "date" | "count">(task?.repeatRule?.endType ?? "never");
+  const [repeatEndDate, setRepeatEndDate] = useState(task?.repeatRule?.endDate ?? "");
+  const [repeatCount, setRepeatCount] = useState(String(task?.repeatRule?.count ?? 10));
   const [notice, setNotice] = useState("");
   const [allowConflict, setAllowConflict] = useState(false);
 
@@ -845,6 +1207,14 @@ function TaskModal({ task, tasks, close, saved }: {
     }
     if (parseMinutes(endTime) <= parseMinutes(startTime)) {
       setNotice("Giờ kết thúc phải sau giờ bắt đầu.");
+      return;
+    }
+    if (repeatFrequency === "weekly" && repeatWeekdays.size === 0) {
+      setNotice("Vui lòng chọn ít nhất một ngày lặp trong tuần.");
+      return;
+    }
+    if (repeatFrequency !== "none" && repeatEndType === "date" && !repeatEndDate) {
+      setNotice("Vui lòng chọn ngày kết thúc chuỗi lặp.");
       return;
     }
     const conflict = tasks.find(
@@ -886,6 +1256,15 @@ function TaskModal({ task, tasks, close, saved }: {
       tags: task?.tags ?? [],
       checklist,
       reminderMinutes: Number(reminderMinutes),
+      timezone: task?.timezone ?? "Asia/Ho_Chi_Minh",
+      repeatRule: {
+        frequency: repeatFrequency,
+        interval: Math.max(1, Number(repeatInterval) || 1),
+        weekdays: repeatFrequency === "weekly" ? [...repeatWeekdays].sort() : [],
+        endType: repeatEndType,
+        endDate: repeatEndType === "date" ? repeatEndDate : null,
+        count: repeatEndType === "count" ? Math.max(1, Number(repeatCount) || 1) : null,
+      },
       createdAt: task?.createdAt ?? timestamp,
       updatedAt: timestamp,
       completedAt: task?.completedAt ?? null,
@@ -952,6 +1331,37 @@ function TaskModal({ task, tasks, close, saved }: {
               })}
             </div>
           )}
+          <div className="recurrence-box">
+            <div className="recurrence-heading"><RotateCcw size={17} /><span><strong>Lặp lại</strong><small>Múi giờ Asia/Ho_Chi_Minh</small></span></div>
+            <div className="form-grid">
+              <label className="form-field"><span>Chu kỳ</span><select value={repeatFrequency} onChange={(event) => setRepeatFrequency(event.target.value as RepeatFrequency)}>{Object.entries(repeatLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <label className="form-field"><span>Mỗi</span><div className="inline-number"><input type="number" min="1" max="365" value={repeatInterval} disabled={repeatFrequency === "none"} onChange={(event) => setRepeatInterval(event.target.value)} /><span>{repeatFrequency === "monthly" ? "tháng" : repeatFrequency === "yearly" ? "năm" : repeatFrequency === "weekly" ? "tuần" : "ngày"}</span></div></label>
+            </div>
+            {repeatFrequency === "weekly" && (
+              <div className="weekday-picker" aria-label="Ngày lặp trong tuần">
+                {dayNames.map((label, value) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className={repeatWeekdays.has(value) ? "active" : ""}
+                    onClick={() => setRepeatWeekdays((current) => {
+                      const next = new Set(current);
+                      if (next.has(value)) next.delete(value);
+                      else next.add(value);
+                      return next;
+                    })}
+                  >{label}</button>
+                ))}
+              </div>
+            )}
+            {repeatFrequency !== "none" && (
+              <div className="form-grid repeat-end-grid">
+                <label className="form-field"><span>Kết thúc</span><select value={repeatEndType} onChange={(event) => setRepeatEndType(event.target.value as "never" | "date" | "count")}><option value="never">Không giới hạn</option><option value="date">Đến ngày</option><option value="count">Sau số lần</option></select></label>
+                {repeatEndType === "date" && <label className="form-field"><span>Ngày cuối</span><input type="date" min={dueDate} value={repeatEndDate} onChange={(event) => setRepeatEndDate(event.target.value)} /></label>}
+                {repeatEndType === "count" && <label className="form-field"><span>Số lần</span><input type="number" min="1" max="999" value={repeatCount} onChange={(event) => setRepeatCount(event.target.value)} /></label>}
+              </div>
+            )}
+          </div>
           {notice && <div className="form-notice"><AlarmClock size={18} /><span>{notice}</span></div>}
           <div className="modal-actions">
             {task && <button className="danger-button" type="button" onClick={remove}><Trash2 size={17} /> Xóa</button>}
@@ -971,17 +1381,20 @@ function NoteModal({ close, saved }: { close: () => void; saved: () => void }) {
   const [category, setCategory] = useState("Cá nhân");
   const [pinned, setPinned] = useState(true);
   const [imageData, setImageData] = useState<string>();
+  const [thumbnailData, setThumbnailData] = useState<string>();
   const [notice, setNotice] = useState("");
 
-  const readImage = (file?: File) => {
+  const readImage = async (file?: File) => {
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) {
-      setNotice("Ảnh cần nhỏ hơn 4 MB cho phiên bản MVP.");
-      return;
+    try {
+      setNotice("Đang tối ưu ảnh…");
+      const optimized = await optimizeImage(file);
+      setImageData(optimized.imageData);
+      setThumbnailData(optimized.thumbnailData);
+      setNotice("Ảnh đã được nén và loại bỏ metadata.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Không thể xử lý ảnh.");
     }
-    const reader = new FileReader();
-    reader.onload = () => setImageData(String(reader.result));
-    reader.readAsDataURL(file);
   };
 
   const submit = async (event: FormEvent) => {
@@ -999,6 +1412,7 @@ function NoteModal({ close, saved }: { close: () => void; saved: () => void }) {
       tags: [],
       isPinned: pinned,
       imageData,
+      thumbnailData,
       createdAt: timestamp,
       updatedAt: timestamp,
       deletedAt: null,
@@ -1016,10 +1430,14 @@ function NoteModal({ close, saved }: { close: () => void; saved: () => void }) {
           <label className="form-field full"><span>Nội dung</span><textarea className="note-editor" value={content} onChange={(event) => setContent(event.target.value)} placeholder="Bắt đầu viết…" /></label>
           <div className="form-grid">
             <label className="form-field"><span>Danh mục</span><select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label className="image-picker"><ImagePlus size={20} /><span>{imageData ? "Đã chọn ảnh" : "Thêm ảnh"}</span><input type="file" accept="image/*" onChange={(event) => readImage(event.target.files?.[0])} /></label>
+            <label className="image-picker"><ImagePlus size={20} /><span>{imageData ? "Đã tối ưu ảnh" : "Thêm ảnh"}</span><input type="file" accept="image/*" onChange={(event) => void readImage(event.target.files?.[0])} /></label>
           </div>
           <label className="check-row"><input type="checkbox" checked={pinned} onChange={(event) => setPinned(event.target.checked)} /><span>Ghim lên Dashboard</span></label>
-          {imageData && <img className="note-preview" src={imageData} alt="Ảnh xem trước" />}
+          {imageData && (
+            // This local preview is generated in-browser before the record is saved.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="note-preview" src={imageData} alt="Ảnh xem trước" />
+          )}
           {notice && <div className="form-notice"><Bell size={18} /><span>{notice}</span></div>}
           <div className="modal-actions"><span /><button className="secondary-button" type="button" onClick={close}>Hủy</button><button className="primary-button" type="submit">Lưu ghi chú</button></div>
         </form>
