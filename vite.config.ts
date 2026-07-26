@@ -12,8 +12,11 @@ const { d1, r2 } = hostingConfig;
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
+  name: "remindup-app",
   main: "./worker/index.ts",
+  compatibility_date: "2026-07-26",
   compatibility_flags: ["nodejs_compat"],
+  workers_dev: true,
   d1_databases: d1
     ? [
         {

@@ -31,7 +31,12 @@ Yêu cầu Node.js `>=22.13.0`.
 npm ci
 npm run dev
 npm run build
+npm run deploy
 ```
+
+`npm run deploy` publishes the production Worker to Cloudflare using the
+authenticated Wrangler account. The first deployment receives a public
+`*.workers.dev` URL; a custom domain can be connected later.
 
 ## Cấu trúc chính
 
