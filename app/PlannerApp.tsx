@@ -56,6 +56,18 @@ import {
 type View = "home" | "calendar" | "notes" | "settings";
 type Modal = "task" | "note" | "security" | null;
 type ClockMode = "countdown" | "stopwatch" | "alarm";
+type StoredClockState = {
+  version: 1;
+  mode: ClockMode;
+  seconds: number;
+  running: boolean;
+  targetAt: number;
+  stopwatchBase: number;
+  durationHours: string;
+  durationMinutes: string;
+  durationSeconds: string;
+  alarmTime: string;
+};
 
 const categories = ["Học tập", "Công việc", "Cá nhân", "Sức khỏe", "Tài chính", "Mục tiêu"];
 
@@ -68,6 +80,7 @@ const priorityLabel: Record<Priority, string> = {
 
 const dayNames = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 const pinStorageKey = "remindup-pin-verifier-v1";
+const clockStateKey = "clock-state-v1";
 const repeatLabels: Record<RepeatFrequency, string> = {
   none: "Không lặp",
   daily: "Hằng ngày",
@@ -417,7 +430,16 @@ export default function PlannerApp() {
 
     checkTaskReminders();
     const timer = window.setInterval(checkTaskReminders, 30_000);
-    return () => window.clearInterval(timer);
+    const checkWhenVisible = () => {
+      if (document.visibilityState === "visible") checkTaskReminders();
+    };
+    document.addEventListener("visibilitychange", checkWhenVisible);
+    window.addEventListener("focus", checkTaskReminders);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", checkWhenVisible);
+      window.removeEventListener("focus", checkTaskReminders);
+    };
   }, [showFeedback, tasks]);
 
   useEffect(() => {
@@ -824,7 +846,98 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
   const [durationSeconds, setDurationSeconds] = useState("0");
   const [alarmTime, setAlarmTime] = useState("09:00");
   const [clockAlert, setClockAlert] = useState<"alarm" | "countdown" | null>(null);
+  const [clockReady, setClockReady] = useState(false);
   const completedRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+
+    const restoreClock = async () => {
+      const stored = await db.settings.get(clockStateKey);
+      if (!active || typeof stored?.value !== "string") {
+        if (active) setClockReady(true);
+        return;
+      }
+
+      try {
+        const restored = JSON.parse(stored.value) as Partial<StoredClockState>;
+        if (
+          restored.version !== 1 ||
+          !["countdown", "stopwatch", "alarm"].includes(String(restored.mode))
+        ) {
+          setClockReady(true);
+          return;
+        }
+
+        const restoredMode = restored.mode as ClockMode;
+        const restoredRunning = Boolean(restored.running && Number(restored.targetAt) > 0);
+        const restoredTargetAt = Number(restored.targetAt) || 0;
+        const restoredBase = Math.max(0, Number(restored.stopwatchBase) || 0);
+        let restoredSeconds = Math.max(0, Number(restored.seconds) || 0);
+
+        if (restoredRunning) {
+          restoredSeconds = restoredMode === "stopwatch"
+            ? restoredBase + Math.max(0, Math.floor((Date.now() - restoredTargetAt) / 1000))
+            : Math.max(0, Math.ceil((restoredTargetAt - Date.now()) / 1000));
+        }
+
+        setMode(restoredMode);
+        setSeconds(restoredSeconds);
+        setRunning(restoredRunning);
+        setTargetAt(restoredTargetAt);
+        setStopwatchBase(restoredBase);
+        setDurationHours(String(restored.durationHours ?? "0"));
+        setDurationMinutes(String(restored.durationMinutes ?? "25"));
+        setDurationSeconds(String(restored.durationSeconds ?? "0"));
+        setAlarmTime(
+          typeof restored.alarmTime === "string" && /^\d{2}:\d{2}$/.test(restored.alarmTime)
+            ? restored.alarmTime
+            : "09:00",
+        );
+      } catch {
+        await db.settings.delete(clockStateKey);
+      } finally {
+        if (active) setClockReady(true);
+      }
+    };
+
+    void restoreClock();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const persistedSeconds = running ? 0 : seconds;
+  useEffect(() => {
+    if (!clockReady) return;
+    const timer = window.setTimeout(() => {
+      const state: StoredClockState = {
+        version: 1,
+        mode,
+        seconds: persistedSeconds,
+        running,
+        targetAt,
+        stopwatchBase,
+        durationHours,
+        durationMinutes,
+        durationSeconds,
+        alarmTime,
+      };
+      void db.settings.put({ key: clockStateKey, value: JSON.stringify(state) });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [
+    alarmTime,
+    clockReady,
+    durationHours,
+    durationMinutes,
+    durationSeconds,
+    mode,
+    persistedSeconds,
+    running,
+    stopwatchBase,
+    targetAt,
+  ]);
 
   const complete = useCallback(() => {
     if (completedRef.current) return;
@@ -844,7 +957,7 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
   }, [alarmTime, mode, onFeedback]);
 
   useEffect(() => {
-    if (!running || !targetAt) return;
+    if (!clockReady || !running || !targetAt) return;
 
     const update = () => {
       if (mode === "stopwatch") {
@@ -858,8 +971,17 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
 
     update();
     const timer = window.setInterval(update, 250);
-    return () => window.clearInterval(timer);
-  }, [complete, mode, running, stopwatchBase, targetAt]);
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") update();
+    };
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    window.addEventListener("focus", update);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+      window.removeEventListener("focus", update);
+    };
+  }, [clockReady, complete, mode, running, stopwatchBase, targetAt]);
 
   const changeMode = (nextMode: ClockMode) => {
     setRunning(false);

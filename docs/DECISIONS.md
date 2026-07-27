@@ -81,6 +81,11 @@ Last updated: 2026-07-27
 - The local clock supports countdown, count-up stopwatch, and a daily alarm
   target. It uses wall-clock timestamps so it catches up after short background
   suspension instead of trusting interval ticks.
+- The selected clock mode, configured duration or alarm time, active target,
+  and paused value persist in local IndexedDB. Reloading or reopening the PWA
+  restores the live state and recalculates elapsed or remaining time.
+- If an active local alarm or countdown expires while the app is suspended,
+  RemindUp presents the due alert immediately when the app becomes active again.
 - The installed PWA respects iPhone safe areas. Mobile form controls use at
   least 16px text so focusing a time or duration field does not trigger Safari
   auto-zoom.
