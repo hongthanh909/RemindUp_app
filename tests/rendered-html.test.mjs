@@ -28,7 +28,7 @@ test("server-renders the RemindUp application shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>RemindUp — Personal Planner<\/title>/i);
+  assert.match(html, /<title>RemindUp - Personal Planner<\/title>/i);
   assert.match(html, /manifest\.webmanifest/i);
   assert.match(html, /lang="vi"/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);

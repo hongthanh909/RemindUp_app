@@ -42,7 +42,7 @@ import {
   type PlannerTask,
   type Priority,
   type RepeatFrequency,
-  seedPlanner,
+  initializePlanner,
 } from "./db";
 
 type View = "home" | "calendar" | "notes" | "settings";
@@ -297,7 +297,7 @@ export default function PlannerApp() {
 
   useEffect(() => {
     const initialize = async () => {
-      await seedPlanner();
+      await initializePlanner();
       const overdue = await db.tasks
         .filter(
           (task) =>
@@ -330,7 +330,7 @@ export default function PlannerApp() {
       setFocusSeconds((value) => {
         if (value <= 1) {
           setFocusRunning(false);
-          setToast("Hoàn thành một phiên tập trung 🎉");
+          setToast("Đã hoàn thành phiên tập trung");
           return 25 * 60;
         }
         return value - 1;
@@ -727,9 +727,9 @@ function Dashboard(props: {
     <>
       <section className="hero-row">
         <div>
-          <p className="eyebrow">{dateLong}</p>
+          <p className="hero-date">{dateLong}</p>
           <h1>{greetingFor(props.now.getHours())}, Thanh Hồng.</h1>
-          <p className="hero-copy">Sắp xếp nhẹ nhàng, tập trung vào điều quan trọng nhất hôm nay.</p>
+          <p className="hero-copy">Một nơi gọn gàng để chọn việc cần làm và giữ nhịp cho ngày hôm nay.</p>
         </div>
         <div className="live-clock" aria-label={`Bây giờ là ${props.timeText}`}>
           <Clock3 size={18} /><strong>{props.timeText}</strong><span>GMT+7</span>
@@ -753,31 +753,34 @@ function Dashboard(props: {
           <section className="focus-card">
             <div className="focus-topline">
               <span><Flame size={17} /> Tiếp theo</span>
-              <span>{props.nextTask ? countdownTo(props.nextTask, props.now) : "Bạn đã hoàn tất"}</span>
+              <span>{props.nextTask ? countdownTo(props.nextTask, props.now) : "Chưa có công việc"}</span>
             </div>
             {props.nextTask ? (
               <>
                 <h2>{props.nextTask.title}</h2>
-                <p>{props.nextTask.startTime}–{props.nextTask.endTime} · {props.nextTask.category}</p>
+                <p>{props.nextTask.startTime}-{props.nextTask.endTime} / {props.nextTask.category}</p>
                 <div className="focus-progress"><span style={{ width: `${props.nextTask.progress}%` }} /></div>
                 <div className="focus-actions">
-                  <button type="button" onClick={() => props.openTask(props.nextTask)}>Xem chi tiết</button>
-                  <button type="button" className="ghost-dark" onClick={() => props.toggleTask(props.nextTask!)}><Check size={17} /> Hoàn thành</button>
+                  <button type="button" onClick={() => props.openTask(props.nextTask)}>Mở công việc</button>
+                  <button type="button" className="ghost-dark" onClick={() => props.toggleTask(props.nextTask!)}><Check size={17} /> Đánh dấu xong</button>
                 </div>
               </>
             ) : (
-              <>
-                <h2>Một ngày thật trọn vẹn.</h2>
-                <p>Không còn công việc nào đang chờ bạn.</p>
-              </>
+              <div className="start-panel">
+                <span className="start-icon"><Plus size={22} /></span>
+                <div>
+                  <h2>Bắt đầu bằng một việc quan trọng</h2>
+                  <p>Thêm công việc đầu tiên. RemindUp sẽ sắp xếp phần còn lại cho bạn.</p>
+                </div>
+                <button type="button" onClick={() => props.openTask()}>Thêm công việc</button>
+              </div>
             )}
-            <span className="focus-orb one" /><span className="focus-orb two" />
           </section>
 
           <section className="section-block">
             <div className="section-heading">
-              <div><p className="eyebrow">Kế hoạch hôm nay</p><h2>Công việc của bạn</h2></div>
-              <button type="button" className="text-button" onClick={() => props.setView("calendar")}>Xem lịch <ChevronRight size={16} /></button>
+              <div><p className="section-kicker">Hôm nay</p><h2>Danh sách công việc</h2></div>
+              <button type="button" className="text-button" onClick={() => props.setView("calendar")}>Mở lịch <ChevronRight size={16} /></button>
             </div>
             <div className="task-list">
               {props.todayTasks.length ? props.todayTasks.map((task) => (
@@ -785,9 +788,9 @@ function Dashboard(props: {
               )) : (
                 <EmptyState
                   icon={Check}
-                  title="Hôm nay đang rất thoáng"
-                  copy="Thêm một việc cần làm để bắt đầu ngày mới."
-                  action={<button className="secondary-button" type="button" onClick={() => props.openTask()}>Tạo công việc</button>}
+                  title="Chưa có việc nào hôm nay"
+                  copy="Thêm một việc có thời gian cụ thể để bắt đầu lập kế hoạch."
+                  action={<button className="secondary-button" type="button" onClick={() => props.openTask()}>Thêm công việc</button>}
                 />
               )}
             </div>
@@ -796,15 +799,18 @@ function Dashboard(props: {
 
         <aside className="dashboard-side">
           <section className="metric-card">
-            <div className="metric-title"><span className="metric-icon"><Sparkles size={17} /></span><div><p>Tiến độ hôm nay</p><strong>{props.completion}%</strong></div></div>
-            <div className="ring" style={{ "--progress": `${props.completion * 3.6}deg` } as React.CSSProperties}><span>{props.completedToday}/{props.todayTasks.length}</span></div>
-            <div className="metric-foot"><span><i className="dot success" /> Đã xong {props.completedToday}</span><span><i className="dot danger" /> Quá hạn {props.overdueCount}</span></div>
+            <div className="metric-title"><span className="metric-icon"><Sparkles size={17} /></span><div><p>Nhịp hôm nay</p><strong>{props.completion}%</strong></div></div>
+            <div className="metric-grid">
+              <div><strong>{props.completedToday}</strong><span>Đã xong</span></div>
+              <div><strong>{props.todayTasks.length}</strong><span>Tổng việc</span></div>
+              <div><strong>{props.overdueCount}</strong><span>Quá hạn</span></div>
+            </div>
           </section>
 
           <section className="timer-card">
             <div className="card-mini-heading"><span><TimerReset size={18} /> Pomodoro</span><button type="button" aria-label="Tùy chọn hẹn giờ"><MoreHorizontal size={18} /></button></div>
             <strong className="timer-value">{pad(Math.floor(props.focusSeconds / 60))}:{pad(props.focusSeconds % 60)}</strong>
-            <p>Phiên tập trung · 25 phút</p>
+            <p>Phiên tập trung / 25 phút</p>
             <div className="timer-actions">
               <button type="button" className="timer-main" onClick={() => props.setFocusRunning(!props.focusRunning)}>
                 {props.focusRunning ? <Pause size={18} /> : <Play size={18} />}
@@ -818,7 +824,7 @@ function Dashboard(props: {
             <div className="card-mini-heading"><span><FileText size={18} /> Ghi chú ghim</span><button type="button" onClick={props.openNote} aria-label="Tạo ghi chú"><Plus size={18} /></button></div>
             {pinned.length ? pinned.map((note) => (
               <article key={note.id}><strong>{note.title}</strong><p>{note.content}</p></article>
-            )) : <p className="muted">Chưa có ghi chú được ghim.</p>}
+            )) : <div className="mini-empty"><p>Chưa có ghi chú ghim.</p><button type="button" onClick={props.openNote}>Thêm ghi chú</button></div>}
           </section>
         </aside>
       </div>
@@ -835,7 +841,7 @@ function TaskCard({ task, toggle, edit }: { task: PlannerTask; toggle: () => voi
       </button>
       <button type="button" className="task-body" onClick={edit}>
         <span className="task-top"><strong>{task.title}</strong><span className={`priority-pill ${task.priority}`}>{priorityLabel[task.priority]}</span></span>
-        <span className="task-meta"><Clock3 size={14} /> {task.startTime}–{task.endTime}<i />{task.category}{task.repeatRule && task.repeatRule.frequency !== "none" && <><i />{repeatLabels[task.repeatRule.frequency]}</>}</span>
+        <span className="task-meta"><Clock3 size={14} /> {task.startTime}-{task.endTime}<i />{task.category}{task.repeatRule && task.repeatRule.frequency !== "none" && <><i />{repeatLabels[task.repeatRule.frequency]}</>}</span>
         {task.progress > 0 && task.progress < 100 && <span className="task-progress"><i style={{ width: `${task.progress}%` }} /></span>}
       </button>
       <button type="button" className="task-more" onClick={edit} aria-label="Chỉnh sửa công việc"><MoreHorizontal size={18} /></button>
@@ -861,7 +867,7 @@ function CalendarView({ tasks, selectedDate, setSelectedDate, toggleTask, openTa
   return (
     <section>
       <div className="page-heading">
-        <div><p className="eyebrow">Timeline</p><h1>Lịch của bạn</h1><p>Xem nhanh thời gian bận và khoảng trống trong ngày.</p></div>
+        <div><p className="eyebrow">Theo ngày</p><h1>Lịch của bạn</h1><p>Xem nhanh thời gian bận và khoảng trống trong ngày.</p></div>
         <button className="primary-button" type="button" onClick={() => openTask()}><Plus size={18} /> Tạo lịch</button>
       </div>
       <div className="calendar-toolbar">
@@ -924,7 +930,7 @@ function NotesView({ notes, query, openNote, refresh, setToast }: {
   return (
     <section>
       <div className="page-heading">
-        <div><p className="eyebrow">Ý tưởng & thông tin</p><h1>Ghi chú</h1><p>Mọi thứ bạn muốn nhớ, luôn sẵn sàng ngay cả khi ngoại tuyến.</p></div>
+        <div><p className="eyebrow">Ý tưởng và thông tin</p><h1>Ghi chú</h1><p>Lưu điều cần nhớ và xem lại ngay cả khi ngoại tuyến.</p></div>
         <button className="primary-button" type="button" onClick={openNote}><Plus size={18} /> Ghi chú mới</button>
       </div>
       {visible.length ? (
@@ -942,7 +948,7 @@ function NotesView({ notes, query, openNote, refresh, setToast }: {
             </article>
           ))}
         </div>
-      ) : <EmptyState icon={FileText} title="Chưa có ghi chú" copy="Ghi lại một ý tưởng, danh sách hoặc điều bạn không muốn quên." action={<button className="secondary-button" type="button" onClick={openNote}>Tạo ghi chú</button>} />}
+      ) : <EmptyState icon={FileText} title="Chưa có ghi chú" copy="Tạo ghi chú đầu tiên để lưu ý tưởng, danh sách hoặc thông tin quan trọng." action={<button className="secondary-button" type="button" onClick={openNote}>Thêm ghi chú</button>} />}
     </section>
   );
 }
@@ -1226,7 +1232,7 @@ function TaskModal({ task, tasks, close, saved }: {
         parseMinutes(endTime) > parseMinutes(item.startTime),
     );
     if (conflict && !allowConflict) {
-      setNotice(`Trùng lịch với “${conflict.title}” (${conflict.startTime}–${conflict.endTime}). Nhấn “Vẫn lưu” nếu bạn muốn tiếp tục.`);
+      setNotice(`Trùng lịch với “${conflict.title}” (${conflict.startTime}-${conflict.endTime}). Nhấn “Vẫn lưu” nếu bạn muốn tiếp tục.`);
       setAllowConflict(true);
       return;
     }
@@ -1298,7 +1304,7 @@ function TaskModal({ task, tasks, close, saved }: {
       <section className="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
         <div className="modal-head"><div><p className="eyebrow">{task ? "Cập nhật kế hoạch" : "Thêm vào hôm nay"}</p><h2 id="task-modal-title">{task ? "Chỉnh sửa công việc" : "Công việc mới"}</h2></div><button type="button" onClick={close} aria-label="Đóng"><X size={21} /></button></div>
         <form onSubmit={submit}>
-          <label className="form-field full"><span>Tiêu đề *</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ví dụ: Ôn thi Database Security" /></label>
+          <label className="form-field full"><span>Tiêu đề *</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nhập tên công việc" /></label>
           <label className="form-field full"><span>Mô tả</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Thêm nội dung giúp bạn bắt đầu dễ hơn…" /></label>
           <div className="form-grid">
             <label className="form-field"><span>Ngày</span><input type="date" value={dueDate} onChange={(event) => { setDueDate(event.target.value); setAllowConflict(false); }} /></label>
@@ -1308,7 +1314,7 @@ function TaskModal({ task, tasks, close, saved }: {
             <label className="form-field"><span>Ưu tiên</span><select value={priority} onChange={(event) => setPriority(event.target.value as Priority)}>{Object.entries(priorityLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label className="form-field"><span>Nhắc trước</span><select value={reminderMinutes} onChange={(event) => setReminderMinutes(event.target.value)}><option value="5">5 phút</option><option value="15">15 phút</option><option value="30">30 phút</option><option value="60">1 giờ</option><option value="1440">1 ngày</option></select></label>
           </div>
-          <label className="form-field full"><span>Checklist <small>(mỗi dòng một mục)</small></span><textarea value={checklistText} onChange={(event) => setChecklistText(event.target.value)} placeholder={"Đọc chương 1\nLàm đề thử\nXem lại ghi chú"} /></label>
+          <label className="form-field full"><span>Checklist <small>(mỗi dòng một mục)</small></span><textarea value={checklistText} onChange={(event) => setChecklistText(event.target.value)} placeholder="Thêm các bước cần hoàn thành" /></label>
           {checklistText.trim() && (
             <div className="checklist-preview" aria-label="Tiến độ checklist">
               {checklistText.split("\n").map((label) => label.trim()).filter(Boolean).map((label) => {

@@ -100,106 +100,35 @@ export function localDateKey(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function atDayOffset(offset: number) {
-  const date = new Date();
-  date.setDate(date.getDate() + offset);
-  return localDateKey(date);
-}
+const legacyDemoTasks = [
+  { title: "Hoàn thiện đề cương Database Security", description: "Rà soát phần phân quyền và chuẩn bị câu hỏi ôn tập." },
+  { title: "Tập thể dục", description: "Chạy nhẹ và giãn cơ." },
+  { title: "Nộp bài Business Law", description: "Kiểm tra định dạng và nộp bản PDF." },
+];
 
-export async function seedPlanner() {
-  if ((await db.tasks.count()) > 0 || (await db.notes.count()) > 0) return;
+const legacyDemoNotes = [
+  {
+    title: "Mục tiêu tuần này",
+    content: "Hoàn thành đề cương trước thứ Tư, duy trì 4 phiên Pomodoro mỗi ngày và ngủ trước 23:30.",
+  },
+];
 
-  const now = new Date().toISOString();
-  const today = atDayOffset(0);
-  const tomorrow = atDayOffset(1);
+export async function initializePlanner() {
+  const cleanupKey = "legacy-demo-cleaned-v1";
+  if (await db.settings.get(cleanupKey)) return;
 
-  await db.transaction("rw", db.tasks, db.notes, db.history, async () => {
-    await db.tasks.bulkAdd([
-      {
-        id: crypto.randomUUID(),
-        title: "Hoàn thiện đề cương Database Security",
-        description: "Rà soát phần phân quyền và chuẩn bị câu hỏi ôn tập.",
-        dueDate: today,
-        startTime: "09:00",
-        endTime: "10:30",
-        priority: "high",
-        status: "in_progress",
-        progress: 60,
-        category: "Học tập",
-        tags: ["ôn thi", "database"],
-        checklist: [
-          { id: crypto.randomUUID(), label: "Ôn chương 1", done: true },
-          { id: crypto.randomUUID(), label: "Ôn chương 2", done: true },
-          { id: crypto.randomUUID(), label: "Làm đề cũ", done: false },
-        ],
-        reminderMinutes: 30,
-        timezone: "Asia/Ho_Chi_Minh",
-        repeatRule: { frequency: "none", interval: 1, weekdays: [], endType: "never", endDate: null, count: null },
-        createdAt: now,
-        updatedAt: now,
-        completedAt: null,
-      },
-      {
-        id: crypto.randomUUID(),
-        title: "Tập thể dục",
-        description: "Chạy nhẹ và giãn cơ.",
-        dueDate: today,
-        startTime: "18:00",
-        endTime: "19:00",
-        priority: "medium",
-        status: "not_started",
-        progress: 0,
-        category: "Sức khỏe",
-        tags: ["sức khỏe"],
-        checklist: [],
-        reminderMinutes: 15,
-        timezone: "Asia/Ho_Chi_Minh",
-        repeatRule: { frequency: "weekly", interval: 1, weekdays: [6], endType: "never", endDate: null, count: null },
-        createdAt: now,
-        updatedAt: now,
-        completedAt: null,
-      },
-      {
-        id: crypto.randomUUID(),
-        title: "Nộp bài Business Law",
-        description: "Kiểm tra định dạng và nộp bản PDF.",
-        dueDate: tomorrow,
-        startTime: "08:00",
-        endTime: "08:30",
-        priority: "urgent",
-        status: "not_started",
-        progress: 20,
-        category: "Học tập",
-        tags: ["deadline"],
-        checklist: [],
-        reminderMinutes: 60,
-        timezone: "Asia/Ho_Chi_Minh",
-        repeatRule: { frequency: "none", interval: 1, weekdays: [], endType: "never", endDate: null, count: null },
-        createdAt: now,
-        updatedAt: now,
-        completedAt: null,
-      },
-    ]);
+  await db.transaction("rw", db.tasks, db.notes, db.history, db.settings, async () => {
+    const [tasks, notes] = await Promise.all([db.tasks.toArray(), db.notes.toArray()]);
+    const taskIds = tasks
+      .filter((task) => legacyDemoTasks.some((demo) => demo.title === task.title && demo.description === task.description))
+      .map((task) => task.id);
+    const noteIds = notes
+      .filter((note) => legacyDemoNotes.some((demo) => demo.title === note.title && demo.content === note.content))
+      .map((note) => note.id);
 
-    await db.notes.add({
-      id: crypto.randomUUID(),
-      title: "Mục tiêu tuần này",
-      content:
-        "Hoàn thành đề cương trước thứ Tư, duy trì 4 phiên Pomodoro mỗi ngày và ngủ trước 23:30.",
-      category: "Mục tiêu",
-      tags: ["tuần này"],
-      isPinned: true,
-      createdAt: now,
-      updatedAt: now,
-      deletedAt: null,
-    });
+    if (taskIds.length) await db.tasks.bulkDelete(taskIds);
+    if (noteIds.length) await db.notes.bulkDelete(noteIds);
 
-    await db.history.add({
-      entityType: "settings",
-      entityId: "database",
-      action: "Khởi tạo",
-      detail: "Đã tạo dữ liệu mẫu trên thiết bị.",
-      createdAt: now,
-    });
+    await db.settings.put({ key: cleanupKey, value: true });
   });
 }

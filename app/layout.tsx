@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
+import "@fontsource-variable/manrope";
 import "./globals.css";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -7,7 +8,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
-  const title = "RemindUp — Personal Planner";
+  const title = "RemindUp - Personal Planner";
   const description =
     "Không gian lập kế hoạch cá nhân, quản lý công việc, ghi chú và tập trung theo cách riêng của bạn.";
 
@@ -50,8 +51,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fbfaf8" },
-    { media: "(prefers-color-scheme: dark)", color: "#151210" },
+    { media: "(prefers-color-scheme: light)", color: "#f7f7f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#12110f" },
   ],
 };
 
