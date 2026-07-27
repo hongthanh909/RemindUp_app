@@ -12,6 +12,16 @@ Last updated: 2026-07-27
 - The public PWA is hosted on Vercel. Cloudflare Workers remains an optional
   deployment target and does not change the local-first data model.
 
+## UI system
+
+- The product palette is white/ivory with soft orange accents and a matching
+  semantic Dark Mode.
+- The Today dashboard prioritizes the weekly date strip, greeting and progress,
+  task list, pinned notes, and focus clock in that order.
+- Dashboard task rows use actual user records, one Lucide icon family, compact
+  completion controls, and the same card/touch language in calendar views.
+- Touch targets are at least 44px and fixed surfaces respect iPhone safe areas.
+
 ## Recurrence and time
 
 - Supported recurrence: daily, selected weekdays, weekly, monthly, yearly, and

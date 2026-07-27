@@ -5,6 +5,8 @@ import {
   ArchiveRestore,
   Bell,
   BellRing,
+  BookOpen,
+  Briefcase,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -12,14 +14,15 @@ import {
   Circle,
   Clock3,
   Download,
+  Dumbbell,
   FileText,
   Flame,
+  HeartPulse,
   Home,
   ImagePlus,
   KeyRound,
   LockKeyhole,
   Moon,
-  MoreHorizontal,
   Pause,
   Play,
   Plus,
@@ -28,14 +31,17 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Star,
   Sun,
   Tag,
+  Target,
   TimerReset,
   Trash2,
   Upload,
+  Wallet,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   db,
@@ -184,16 +190,15 @@ function greetingFor(hour: number) {
   return "Chào buổi tối";
 }
 
-function countdownTo(task: PlannerTask, now: Date) {
-  const target = new Date(`${task.dueDate}T${task.startTime || "23:59"}:00`);
-  const diff = target.getTime() - now.getTime();
-  if (diff <= 0) return "Đã đến giờ";
-  const minutes = Math.floor(diff / 60000);
-  const days = Math.floor(minutes / 1440);
-  const hours = Math.floor((minutes % 1440) / 60);
-  if (days > 0) return `Còn ${days} ngày ${hours} giờ`;
-  if (hours > 0) return `Còn ${hours} giờ ${minutes % 60} phút`;
-  return `Còn ${Math.max(1, minutes)} phút`;
+function CategoryGlyph({ category }: { category: string }) {
+  const value = category.toLocaleLowerCase("vi");
+  if (value.includes("học")) return <BookOpen size={21} />;
+  if (value.includes("công")) return <Briefcase size={21} />;
+  if (value.includes("sức")) return <HeartPulse size={21} />;
+  if (value.includes("thể")) return <Dumbbell size={21} />;
+  if (value.includes("tài")) return <Wallet size={21} />;
+  if (value.includes("mục tiêu")) return <Target size={21} />;
+  return <Sparkles size={21} />;
 }
 
 function useClock() {
@@ -305,6 +310,7 @@ export default function PlannerApp() {
   const [modal, setModal] = useState<Modal>(null);
   const [editingTask, setEditingTask] = useState<PlannerTask | null>(null);
   const [query, setQuery] = useState("");
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState(localDateKey());
   const [taskDraftDate, setTaskDraftDate] = useState(localDateKey());
   const [loading, setLoading] = useState(true);
@@ -451,13 +457,7 @@ export default function PlannerApp() {
     .filter((task) => task.dueDate === selectedDate)
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
   const completedSelected = selectedTasks.filter((task) => task.status === "completed").length;
-  const overdueCount = tasks.filter((task) => task.status === "overdue").length;
   const completion = selectedTasks.length ? Math.round((completedSelected / selectedTasks.length) * 100) : 0;
-  const nextTask = [...tasks]
-    .filter((task) => task.status !== "completed" && task.status !== "cancelled")
-    .sort((a, b) => `${a.dueDate}${a.startTime}`.localeCompare(`${b.dueDate}${b.startTime}`))
-    .find((task) => new Date(`${task.dueDate}T${task.startTime || "23:59"}:00`) >= now);
-
   const timeText = new Intl.DateTimeFormat("vi-VN", {
     hour: "2-digit",
     minute: "2-digit",
@@ -608,7 +608,7 @@ export default function PlannerApp() {
             <span className="brand-mark"><Sparkles size={18} /></span>
             <strong>RemindUp</strong>
           </div>
-          <label className="search-field">
+          <label className={`search-field ${mobileSearchOpen ? "mobile-open" : ""}`}>
             <Search size={18} />
             <input
               value={query}
@@ -619,6 +619,15 @@ export default function PlannerApp() {
             {query && <button type="button" onClick={() => setQuery("")} aria-label="Xóa tìm kiếm"><X size={16} /></button>}
           </label>
           <div className="top-actions">
+            <button
+              className="icon-button mobile-search-toggle"
+              type="button"
+              onClick={() => setMobileSearchOpen((value) => !value)}
+              aria-label={mobileSearchOpen ? "Đóng tìm kiếm" : "Mở tìm kiếm"}
+              aria-expanded={mobileSearchOpen}
+            >
+              {mobileSearchOpen ? <X size={19} /> : <Search size={19} />}
+            </button>
             <button className="icon-button" type="button" onClick={requestNotifications} aria-label="Bật thông báo"><Bell size={19} /></button>
             <span className="avatar">TH</span>
           </div>
@@ -631,10 +640,8 @@ export default function PlannerApp() {
               timeText={timeText}
               selectedDate={selectedDate}
               selectedTasks={selectedTasks}
-              nextTask={nextTask}
               completion={completion}
               completedSelected={completedSelected}
-              overdueCount={overdueCount}
               notes={notes}
               toggleTask={toggleTask}
               openTask={openTask}
@@ -784,15 +791,20 @@ function Navigation({ view, setView, openTask, desktop = false }: {
       </div>
     );
   }
+  const mobileItems = items.map((item) => {
+    if (item.id === "calendar") return { ...item, label: "Công việc" };
+    if (item.id === "settings") return { ...item, label: "Cá nhân" };
+    return item;
+  });
   return (
     <>
-      {items.slice(0, 2).map(({ id, label, icon: Icon }) => (
+      {mobileItems.slice(0, 2).map(({ id, label, icon: Icon }) => (
         <button key={id} type="button" className={view === id ? "active" : ""} onClick={() => setView(id)}>
           <Icon size={21} /><span>{label}</span>
         </button>
       ))}
       <button className="nav-create" type="button" onClick={openTask} aria-label="Tạo công việc"><Plus size={25} /></button>
-      {items.slice(2).map(({ id, label, icon: Icon }) => (
+      {mobileItems.slice(2).map(({ id, label, icon: Icon }) => (
         <button key={id} type="button" className={view === id ? "active" : ""} onClick={() => setView(id)}>
           <Icon size={21} /><span>{label}</span>
         </button>
@@ -1029,10 +1041,8 @@ function Dashboard(props: {
   timeText: string;
   selectedDate: string;
   selectedTasks: PlannerTask[];
-  nextTask?: PlannerTask;
   completion: number;
   completedSelected: number;
-  overdueCount: number;
   notes: PlannerNote[];
   toggleTask: (task: PlannerTask) => void;
   openTask: (task?: PlannerTask, dueDate?: string) => void;
@@ -1043,28 +1053,19 @@ function Dashboard(props: {
 }) {
   const week = createWeek(props.now);
   const today = localDateKey(props.now);
+  const selectedIsToday = props.selectedDate === today;
   const selectedIsPast = props.selectedDate < today;
   const selectedLabel = dateContextLabel(props.selectedDate, today);
-  const dateLong = new Intl.DateTimeFormat("vi-VN", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(props.now);
-  const pinned = props.notes.filter((note) => note.isPinned).slice(0, 2);
+  const pinned = props.notes.filter((note) => note.isPinned).slice(0, 3);
+  const activeSelected = props.selectedTasks.filter(
+    (task) => task.status !== "completed" && task.status !== "cancelled",
+  ).length;
+  const progressStyle = {
+    "--progress": `${Math.max(0, Math.min(100, props.completion)) * 3.6}deg`,
+  } as CSSProperties;
+
   return (
     <>
-      <section className="hero-row">
-        <div>
-          <p className="hero-date">{dateLong}</p>
-          <h1>{greetingFor(props.now.getHours())}, Thanh Hồng.</h1>
-          <p className="hero-copy">Một nơi gọn gàng để chọn việc cần làm và giữ nhịp cho ngày hôm nay.</p>
-        </div>
-        <div className="live-clock" aria-label={`Bây giờ là ${props.timeText}`}>
-          <Clock3 size={18} /><strong>{props.timeText}</strong><span>GMT+7</span>
-        </div>
-      </section>
-
       <section className="week-strip" aria-label="Bảy ngày gần đây">
         {week.map((date) => {
           const key = dateKey(date);
@@ -1086,88 +1087,125 @@ function Dashboard(props: {
         })}
       </section>
 
-      <div className={`date-context ${selectedIsPast ? "past" : ""}`}>
-        <div>
-          <CalendarDays size={18} />
-          <span><strong>{selectedLabel}</strong><small>{props.selectedTasks.length} công việc</small></span>
+      <section className="today-overview">
+        <div className="today-greeting">
+          <span className="today-greeting-icon">
+            {selectedIsToday ? <Sun size={30} /> : <CalendarDays size={27} />}
+          </span>
+          <div>
+            <p>{selectedIsToday ? "Kế hoạch hôm nay" : selectedLabel}</p>
+            <h1>
+              {selectedIsToday
+                ? `${greetingFor(props.now.getHours())}, Thanh Hồng`
+                : selectedIsPast
+                  ? "Xem lại một ngày đã qua"
+                  : "Chuẩn bị trước cho ngày này"}
+            </h1>
+            <span>{activeSelected} việc cần làm · {props.timeText}</span>
+          </div>
         </div>
-        {selectedIsPast ? (
-          <span className="date-context-note">Thời gian này đã qua</span>
-        ) : (
-          <button type="button" onClick={() => props.openTask(undefined, props.selectedDate)}>
-            <Plus size={17} /> Thêm công việc
-          </button>
-        )}
-      </div>
+        <div
+          className="progress-ring"
+          style={progressStyle}
+          role="img"
+          aria-label={`Đã hoàn thành ${props.completion}% công việc ngày chọn`}
+        >
+          <span><strong>{props.completion}%</strong><small>Tiến độ</small></span>
+        </div>
+      </section>
 
-      <div className="dashboard-grid">
-        <div className="dashboard-main">
-          <section className="focus-card">
-            <div className="focus-topline">
-              <span><Flame size={17} /> Tiếp theo</span>
-              <span>{props.nextTask ? countdownTo(props.nextTask, props.now) : "Chưa có công việc"}</span>
-            </div>
-            {props.nextTask ? (
-              <>
-                <h2>{props.nextTask.title}</h2>
-                <p>{props.nextTask.startTime}-{props.nextTask.endTime} / {props.nextTask.category}</p>
-                <div className="focus-progress"><span style={{ width: `${props.nextTask.progress}%` }} /></div>
-                <div className="focus-actions">
-                  <button type="button" onClick={() => props.openTask(props.nextTask)}>Mở công việc</button>
-                  <button type="button" className="ghost-dark" onClick={() => props.toggleTask(props.nextTask!)}><Check size={17} /> Đánh dấu xong</button>
-                </div>
-              </>
-            ) : (
-              <div className="start-panel">
-                <span className="start-icon"><Plus size={22} /></span>
-                <div>
-                  <h2>Bắt đầu bằng một việc quan trọng</h2>
-                  <p>Thêm công việc đầu tiên. RemindUp sẽ sắp xếp phần còn lại cho bạn.</p>
-                </div>
-                <button type="button" onClick={() => props.openTask()}>Thêm công việc</button>
-              </div>
+      {!selectedIsToday && (
+        <div className={`date-context ${selectedIsPast ? "past" : ""}`}>
+          <div>
+            <CalendarDays size={18} />
+            <span><strong>{selectedLabel}</strong><small>{props.selectedTasks.length} công việc</small></span>
+          </div>
+          {selectedIsPast ? (
+            <span className="date-context-note">Chỉ có thể xem lại</span>
+          ) : (
+            <button type="button" onClick={() => props.openTask(undefined, props.selectedDate)}>
+              <Plus size={17} /> Thêm công việc
+            </button>
+          )}
+        </div>
+      )}
+
+      <section className="today-tasks">
+        <div className="today-section-heading">
+          <div>
+            <p>{selectedIsToday ? "Hôm nay" : selectedLabel}</p>
+            <h2>Công việc</h2>
+          </div>
+          <div>
+            <span>{props.completedSelected}/{props.selectedTasks.length} đã xong</span>
+            {!selectedIsPast && (
+              <button
+                type="button"
+                onClick={() => props.openTask(undefined, props.selectedDate)}
+                aria-label="Thêm công việc"
+              >
+                <Plus size={19} />
+              </button>
             )}
-          </section>
-
-          <section className="section-block">
-            <div className="section-heading">
-              <div><p className="section-kicker">{selectedLabel}</p><h2>Danh sách công việc</h2></div>
-              <button type="button" className="text-button" onClick={() => props.setView("calendar")}>Mở lịch <ChevronRight size={16} /></button>
-            </div>
-            <div className="task-list">
-              {props.selectedTasks.length ? props.selectedTasks.map((task) => (
-                <TaskCard key={task.id} task={task} toggle={() => props.toggleTask(task)} edit={() => props.openTask(task)} />
-              )) : (
-                <EmptyState
-                  icon={selectedIsPast ? ArchiveRestore : Check}
-                  title={selectedIsPast ? "Ngày này không có công việc" : "Chưa có việc trong ngày này"}
-                  copy={selectedIsPast ? "Bạn đang xem một ngày đã qua. Không thể tạo lịch mới cho thời điểm này." : "Thêm một việc có thời gian cụ thể để bắt đầu lập kế hoạch."}
-                  action={!selectedIsPast ? <button className="secondary-button" type="button" onClick={() => props.openTask(undefined, props.selectedDate)}>Thêm công việc</button> : undefined}
-                />
-              )}
-            </div>
-          </section>
+          </div>
         </div>
 
-        <aside className="dashboard-side">
-          <section className="metric-card">
-            <div className="metric-title"><span className="metric-icon"><Sparkles size={17} /></span><div><p>Tiến độ ngày chọn</p><strong>{props.completion}%</strong></div></div>
-            <div className="metric-grid">
-              <div><strong>{props.completedSelected}</strong><span>Đã xong</span></div>
-              <div><strong>{props.selectedTasks.length}</strong><span>Tổng việc</span></div>
-              <div><strong>{props.overdueCount}</strong><span>Quá hạn</span></div>
+        <div className="today-task-list">
+          {props.selectedTasks.length ? props.selectedTasks.map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              toggle={() => props.toggleTask(task)}
+              edit={() => props.openTask(task)}
+            />
+          )) : (
+            <EmptyState
+              icon={selectedIsPast ? ArchiveRestore : Check}
+              title={selectedIsPast ? "Ngày này chưa có công việc" : "Ngày này đang còn trống"}
+              copy={
+                selectedIsPast
+                  ? "Bạn đang xem lại lịch sử và không thể thêm công việc vào thời gian đã qua."
+                  : "Thêm công việc đầu tiên để RemindUp giúp bạn giữ nhịp trong ngày."
+              }
+              action={!selectedIsPast ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => props.openTask(undefined, props.selectedDate)}
+                >
+                  <Plus size={17} /> Thêm công việc
+                </button>
+              ) : undefined}
+            />
+          )}
+        </div>
+      </section>
+
+      <div className="today-tools-grid">
+        <section className="notes-card today-notes">
+          <div className="card-mini-heading">
+            <span><FileText size={18} /> Ghi chú ghim</span>
+            <button type="button" onClick={props.openNote} aria-label="Tạo ghi chú"><Plus size={18} /></button>
+          </div>
+          {pinned.length ? (
+            <div className="today-note-list">
+              {pinned.map((note) => (
+                <button key={note.id} type="button" onClick={() => props.setView("notes")}>
+                  <i />
+                  <span><strong>{note.title}</strong><small>{note.content || "Không có nội dung"}</small></span>
+                  <ChevronRight size={16} />
+                </button>
+              ))}
             </div>
-          </section>
+          ) : (
+            <div className="mini-empty">
+              <p>Chưa có ghi chú ghim.</p>
+              <button type="button" onClick={props.openNote}>Thêm ghi chú</button>
+            </div>
+          )}
+        </section>
 
-          <ClockCard onFeedback={props.showFeedback} />
-
-          <section className="notes-card">
-            <div className="card-mini-heading"><span><FileText size={18} /> Ghi chú ghim</span><button type="button" onClick={props.openNote} aria-label="Tạo ghi chú"><Plus size={18} /></button></div>
-            {pinned.length ? pinned.map((note) => (
-              <article key={note.id}><strong>{note.title}</strong><p>{note.content}</p></article>
-            )) : <div className="mini-empty"><p>Chưa có ghi chú ghim.</p><button type="button" onClick={props.openNote}>Thêm ghi chú</button></div>}
-          </section>
-        </aside>
+        <ClockCard onFeedback={props.showFeedback} />
       </div>
     </>
   );
@@ -1175,17 +1213,26 @@ function Dashboard(props: {
 
 function TaskCard({ task, toggle, edit }: { task: PlannerTask; toggle: () => void; edit: () => void }) {
   const completed = task.status === "completed";
+  const important = task.priority === "high" || task.priority === "urgent";
   return (
     <article className={`task-card priority-${task.priority} ${completed ? "completed" : ""}`}>
-      <button type="button" className="task-check" onClick={toggle} aria-label={completed ? "Mở lại công việc" : "Đánh dấu hoàn thành"}>
-        {completed ? <Check size={16} /> : <Circle size={18} />}
+      <button type="button" className="task-category-icon" onClick={edit} aria-label={`Mở ${task.title}`}>
+        <CategoryGlyph category={task.category} />
       </button>
       <button type="button" className="task-body" onClick={edit}>
-        <span className="task-top"><strong>{task.title}</strong><span className={`priority-pill ${task.priority}`}>{priorityLabel[task.priority]}</span></span>
-        <span className="task-meta"><Clock3 size={14} /> {task.startTime}-{task.endTime}<i />{task.category}{task.repeatRule && task.repeatRule.frequency !== "none" && <><i />{repeatLabels[task.repeatRule.frequency]}</>}</span>
+        <span className="task-top"><strong>{task.title}</strong></span>
+        <span className="task-meta">
+          {task.startTime}-{task.endTime}
+          <i />
+          {task.category}
+          {task.repeatRule && task.repeatRule.frequency !== "none" && <><i />{repeatLabels[task.repeatRule.frequency]}</>}
+        </span>
         {task.progress > 0 && task.progress < 100 && <span className="task-progress"><i style={{ width: `${task.progress}%` }} /></span>}
       </button>
-      <button type="button" className="task-more" onClick={edit} aria-label="Chỉnh sửa công việc"><MoreHorizontal size={18} /></button>
+      <button type="button" className="task-check" onClick={toggle} aria-label={completed ? "Mở lại công việc" : "Đánh dấu hoàn thành"}>
+        {completed ? <Check size={18} /> : <span />}
+      </button>
+      {important && <Star className="task-star" size={20} aria-label={`Mức ưu tiên ${priorityLabel[task.priority]}`} />}
     </article>
   );
 }
