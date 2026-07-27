@@ -21,7 +21,8 @@ offline trên iPhone.
 - Vinext/Vite
 - Tailwind CSS và design tokens trong `app/globals.css`
 - Dexie/IndexedDB
-- Cloudflare Worker-compatible runtime
+- Vercel production hosting
+- Cloudflare Worker-compatible runtime as an optional target
 
 ## Chạy dự án
 
@@ -34,9 +35,9 @@ npm run build
 npm run deploy
 ```
 
-`npm run deploy` publishes the production Worker to Cloudflare using the
-authenticated Wrangler account. The first deployment receives a public
-`*.workers.dev` URL; a custom domain can be connected later.
+`npm run deploy` publishes the production app to Vercel. Use
+`npm run deploy:cloudflare` only when deploying the optional Cloudflare Worker
+target.
 
 ## Cấu trúc chính
 

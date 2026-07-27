@@ -1,6 +1,6 @@
 # RemindUp product decisions
 
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 ## Product model
 
@@ -9,6 +9,8 @@ Last updated: 2026-07-26
 - Default language: Vietnamese.
 - Default time zone: `Asia/Ho_Chi_Minh`.
 - Cloud sync is optional and disabled by default.
+- The public PWA is hosted on Vercel. Cloudflare Workers remains an optional
+  deployment target and does not change the local-first data model.
 
 ## Recurrence and time
 
