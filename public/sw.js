@@ -1,4 +1,4 @@
-const CACHE_NAME = "remindup-shell-v2";
+const CACHE_NAME = "remindup-shell-v3";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",

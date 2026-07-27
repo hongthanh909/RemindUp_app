@@ -52,6 +52,7 @@ body {
   font-family: "Manrope Variable", "Manrope", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overscroll-behavior-y: contain;
 }
 
 button,
@@ -76,10 +77,21 @@ select {
     color 180ms var(--ease),
     opacity 180ms var(--ease),
     transform 180ms var(--ease);
+  touch-action: manipulation;
 }
 
 button:active {
   transform: scale(0.97);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+  transform: none;
+}
+
+button[aria-disabled="true"] {
+  opacity: 0.58;
 }
 
 button,
@@ -478,6 +490,21 @@ select:focus-visible {
   background: var(--lavender);
 }
 
+.week-strip button:hover,
+.calendar-week button:hover {
+  background: color-mix(in srgb, var(--lavender) 55%, transparent);
+}
+
+.week-strip button.past,
+.calendar-week button.past {
+  opacity: 0.58;
+}
+
+.week-strip button.past.active,
+.calendar-week button.past.active {
+  opacity: 1;
+}
+
 .week-strip button.active i {
   position: absolute;
   bottom: 8px;
@@ -486,6 +513,64 @@ select:focus-visible {
   height: 6px;
   border-radius: 50%;
   background: var(--accent-strong);
+}
+
+.date-context {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -14px 0 24px;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
+}
+
+.date-context > div,
+.date-context > div > span {
+  display: flex;
+  align-items: center;
+}
+
+.date-context > div {
+  gap: 10px;
+  min-width: 0;
+}
+
+.date-context > div > span {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.date-context strong {
+  font-size: 13px;
+}
+
+.date-context small,
+.date-context-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.date-context > button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: #27170d;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.date-context.past {
+  border-style: dashed;
 }
 
 .dashboard-grid {
@@ -898,9 +983,103 @@ select:focus-visible {
   display: block;
   margin-top: 18px;
   font-variant-numeric: tabular-nums;
-  font-size: 41px;
+  font-size: clamp(36px, 9vw, 46px);
   letter-spacing: -0.05em;
   text-align: center;
+}
+
+.live-indicator {
+  color: var(--accent-strong);
+  font-size: 10px !important;
+  font-weight: 700 !important;
+}
+
+.live-indicator i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.timer-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 16px;
+  padding: 4px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--panel) 58%, transparent);
+}
+
+.timer-tabs button {
+  display: grid;
+  min-width: 0;
+  min-height: 48px;
+  place-items: center;
+  gap: 2px;
+  padding: 5px 2px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.timer-tabs button.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 5px 16px rgba(42, 29, 21, 0.07);
+}
+
+.timer-config {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: -4px 0 14px;
+}
+
+.timer-config label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.timer-config input,
+.alarm-input input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: 0;
+  background: var(--panel);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.timer-config > button {
+  grid-column: 1 / -1;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.alarm-input {
+  display: grid;
+  gap: 6px;
+  margin: -5px 0 14px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .timer-card > p {
@@ -933,6 +1112,15 @@ select:focus-visible {
   background: var(--ink);
   color: var(--bg);
   font-weight: 800;
+}
+
+.timer-note {
+  display: block;
+  margin-top: 11px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .notes-card article {
@@ -1629,7 +1817,8 @@ select:focus-visible {
   min-height: 46px;
   align-items: center;
   gap: 9px;
-  padding: 0 16px;
+  overflow: hidden;
+  padding: 0 10px 0 16px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   background: #2a211d;
@@ -1637,6 +1826,35 @@ select:focus-visible {
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
   font-size: 13px;
   font-weight: 700;
+  animation: toast-enter 260ms var(--ease) both;
+}
+
+.toast > span {
+  flex: 1;
+}
+
+.toast > button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  cursor: pointer;
+}
+
+.toast > i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: toast-progress 3.8s linear forwards;
 }
 
 .bottom-nav {
@@ -1652,6 +1870,24 @@ select:focus-visible {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-progress {
+  to {
+    transform: scaleX(1);
   }
 }
 
@@ -1671,6 +1907,24 @@ select:focus-visible {
 
   .main-panel {
     margin-left: 0;
+  }
+
+  .topbar {
+    justify-content: space-between;
+  }
+
+  .mobile-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+  .search-field {
+    width: min(430px, 50vw);
+  }
+
+  .top-actions {
+    position: static;
   }
 
   .dashboard-grid {
@@ -1770,7 +2024,7 @@ select:focus-visible {
   }
 
   .content-wrap {
-    padding: 26px 17px 110px;
+    padding: 26px 17px 132px;
   }
 
   .hero-row {
@@ -1797,6 +2051,23 @@ select:focus-visible {
   .week-strip button {
     min-height: 64px;
     padding: 0;
+  }
+
+  .date-context {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: -10px;
+    padding: 12px;
+  }
+
+  .date-context > button {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .date-context-note {
+    padding-left: 28px;
   }
 
   .focus-card {
@@ -1953,7 +2224,7 @@ select:focus-visible {
     right: 17px;
     bottom: calc(95px + env(safe-area-inset-bottom));
     left: 17px;
-    justify-content: center;
+    justify-content: flex-start;
   }
 }
 
@@ -1964,6 +2235,10 @@ select:focus-visible {
 
   .image-picker {
     margin-top: 0;
+  }
+
+  .timer-card {
+    padding-inline: 14px;
   }
 }
 

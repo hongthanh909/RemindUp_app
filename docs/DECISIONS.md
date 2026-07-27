@@ -68,7 +68,15 @@ Last updated: 2026-07-27
 ## Notifications
 
 - Foreground reminders may run locally.
+- The local clock supports countdown, count-up stopwatch, and a daily alarm
+  target. It uses wall-clock timestamps so it catches up after short background
+  suspension instead of trusting interval ticks.
 - Background delivery uses Web Push and is best-effort.
+- On iOS/iPadOS, notification permission is requested only after the PWA has
+  been added to the Home Screen and the user taps the notification action.
+- Exact delivery after the app is fully closed requires a server-held Push API
+  subscription and scheduled Web Push; local IndexedDB timers alone cannot
+  wake a closed PWA.
 - The service sends at the requested minute but cannot guarantee the exact
   device display time because the operating system, Focus Mode, connectivity,
   and battery policies control delivery.

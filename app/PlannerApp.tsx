@@ -4,6 +4,7 @@ import {
   AlarmClock,
   ArchiveRestore,
   Bell,
+  BellRing,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -47,6 +48,7 @@ import {
 
 type View = "home" | "calendar" | "notes" | "settings";
 type Modal = "task" | "note" | "security" | null;
+type ClockMode = "countdown" | "stopwatch" | "alarm";
 
 const categories = ["Học tập", "Công việc", "Cá nhân", "Sức khỏe", "Tài chính", "Mục tiêu"];
 
@@ -68,6 +70,47 @@ const repeatLabels: Record<RepeatFrequency, string> = {
 };
 
 const pad = (value: number) => String(value).padStart(2, "0");
+
+function pressFeedback(pattern: number | number[] = 10) {
+  if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate(pattern);
+}
+
+async function showSystemNotification(title: string, body: string, tag: string) {
+  if (
+    typeof window === "undefined" ||
+    !("Notification" in window) ||
+    Notification.permission !== "granted" ||
+    !("serviceWorker" in navigator)
+  ) return;
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification(title, {
+      body,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag,
+    });
+  } catch {
+    // The in-app toast remains the fallback when the platform rejects a notification.
+  }
+}
+
+function formatTimer(totalSeconds: number) {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+}
+
+function dateContextLabel(value: string, today: string) {
+  if (value === today) return "Hôm nay";
+  const date = new Date(`${value}T00:00:00`);
+  const prefix = value < today ? "Đã qua" : "Sắp tới";
+  const formatted = new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(date);
+  return `${prefix} / ${formatted}`;
+}
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
@@ -262,6 +305,7 @@ export default function PlannerApp() {
   const [editingTask, setEditingTask] = useState<PlannerTask | null>(null);
   const [query, setQuery] = useState("");
   const [selectedDate, setSelectedDate] = useState(localDateKey());
+  const [taskDraftDate, setTaskDraftDate] = useState(localDateKey());
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [dark, setDark] = useState(() => {
@@ -281,9 +325,12 @@ export default function PlannerApp() {
   const [locked, setLocked] = useState(() =>
     typeof window === "undefined" ? false : Boolean(window.localStorage.getItem(pinStorageKey)),
   );
-  const [focusSeconds, setFocusSeconds] = useState(25 * 60);
-  const [focusRunning, setFocusRunning] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
+
+  const showFeedback = useCallback((message: string) => {
+    setToast(message);
+    pressFeedback();
+  }, []);
 
   const refresh = useCallback(async () => {
     const [taskRows, noteRows] = await Promise.all([
@@ -325,25 +372,46 @@ export default function PlannerApp() {
   }, [dark]);
 
   useEffect(() => {
-    if (!focusRunning) return;
-    const timer = window.setInterval(() => {
-      setFocusSeconds((value) => {
-        if (value <= 1) {
-          setFocusRunning(false);
-          setToast("Đã hoàn thành phiên tập trung");
-          return 25 * 60;
-        }
-        return value - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [focusRunning]);
-
-  useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(""), 2600);
+    const timer = window.setTimeout(() => setToast(""), 3800);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    const checkTaskReminders = () => {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      const timestamp = Date.now();
+
+      tasks.forEach((task) => {
+        if (
+          task.status === "completed" ||
+          task.status === "cancelled" ||
+          task.reminderMinutes === null
+        ) return;
+
+        const startAt = new Date(`${task.dueDate}T${task.startTime}:00`).getTime();
+        const reminderAt = startAt - task.reminderMinutes * 60_000;
+        const reminderKey = `remindup-reminder-${task.id}-${startAt}`;
+        if (
+          timestamp >= reminderAt &&
+          timestamp < startAt + 60_000 &&
+          !window.localStorage.getItem(reminderKey)
+        ) {
+          window.localStorage.setItem(reminderKey, "sent");
+          void showSystemNotification(
+            task.title,
+            `Bắt đầu lúc ${task.startTime} / ${task.category}`,
+            `task-${task.id}`,
+          );
+          showFeedback(`Sắp đến giờ: ${task.title}`);
+        }
+      });
+    };
+
+    checkTaskReminders();
+    const timer = window.setInterval(checkTaskReminders, 30_000);
+    return () => window.clearInterval(timer);
+  }, [showFeedback, tasks]);
 
   useEffect(() => {
     if (!pinConfigured || locked) return;
@@ -378,12 +446,12 @@ export default function PlannerApp() {
   }, [tasks, query]);
 
   const today = localDateKey(now);
-  const todayTasks = filteredTasks
-    .filter((task) => task.dueDate === today)
+  const selectedTasks = filteredTasks
+    .filter((task) => task.dueDate === selectedDate)
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
-  const completedToday = todayTasks.filter((task) => task.status === "completed").length;
+  const completedSelected = selectedTasks.filter((task) => task.status === "completed").length;
   const overdueCount = tasks.filter((task) => task.status === "overdue").length;
-  const completion = todayTasks.length ? Math.round((completedToday / todayTasks.length) * 100) : 0;
+  const completion = selectedTasks.length ? Math.round((completedSelected / selectedTasks.length) * 100) : 0;
   const nextTask = [...tasks]
     .filter((task) => task.status !== "completed" && task.status !== "cancelled")
     .sort((a, b) => `${a.dueDate}${a.startTime}`.localeCompare(`${b.dueDate}${b.startTime}`))
@@ -395,6 +463,11 @@ export default function PlannerApp() {
     second: showSeconds ? "2-digit" : undefined,
     hour12: !clock24,
   }).format(now);
+
+  const navigate = (nextView: View) => {
+    if (nextView === "home") setSelectedDate(today);
+    setView(nextView);
+  };
 
   const toggleTask = async (task: PlannerTask) => {
     const complete = task.status !== "completed";
@@ -413,11 +486,16 @@ export default function PlannerApp() {
       createdAt: timestamp,
     });
     await refresh();
-    setToast(complete ? "Đã hoàn thành công việc" : "Đã mở lại công việc");
+    showFeedback(complete ? "Đã hoàn thành công việc" : "Đã mở lại công việc");
   };
 
-  const openTask = (task?: PlannerTask) => {
+  const openTask = (task?: PlannerTask, dueDate = selectedDate) => {
+    if (!task && dueDate < localDateKey()) {
+      showFeedback("Thời gian này đã cũ. Hãy chọn hôm nay hoặc một ngày trong tương lai");
+      return;
+    }
     setEditingTask(task ?? null);
+    setTaskDraftDate(task?.dueDate ?? dueDate);
     setModal("task");
   };
 
@@ -441,7 +519,7 @@ export default function PlannerApp() {
     anchor.download = `remindup-backup-${localDateKey()}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    setToast("Đã tạo bản sao lưu JSON");
+    showFeedback("Đã tạo bản sao lưu JSON");
   };
 
   const importData = async (file?: File) => {
@@ -471,24 +549,32 @@ export default function PlannerApp() {
         await db.notes.bulkPut(parsed.notes ?? []);
       });
       await refresh();
-      setToast("Khôi phục dữ liệu thành công");
+      showFeedback("Khôi phục dữ liệu thành công");
     } catch {
-      setToast("Tệp sao lưu không hợp lệ");
+      showFeedback("Tệp sao lưu không hợp lệ");
     }
   };
 
   const requestStorage = async () => {
     const granted = await navigator.storage?.persist?.();
-    setToast(granted ? "Đã ưu tiên bảo vệ dữ liệu trên thiết bị" : "Trình duyệt chưa cấp lưu trữ bền vững");
+    showFeedback(granted ? "Đã ưu tiên bảo vệ dữ liệu trên thiết bị" : "Trình duyệt chưa cấp lưu trữ bền vững");
   };
 
   const requestNotifications = async () => {
+    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+    if (isIos && !standalone) {
+      showFeedback("Trên iPhone, hãy Thêm vào Màn hình chính rồi bật thông báo trong app");
+      return;
+    }
     if (!("Notification" in window)) {
-      setToast("Trình duyệt này chưa hỗ trợ thông báo");
+      showFeedback("Trình duyệt này chưa hỗ trợ thông báo");
       return;
     }
     const result = await Notification.requestPermission();
-    setToast(result === "granted" ? "Đã bật thông báo trong ứng dụng" : "Quyền thông báo chưa được bật");
+    showFeedback(result === "granted" ? "Đã bật thông báo trong ứng dụng" : "Quyền thông báo chưa được bật");
   };
 
   if (loading) {
@@ -508,7 +594,7 @@ export default function PlannerApp() {
     <div className="app-shell">
       <aside className="desktop-rail" aria-label="Điều hướng chính">
         <div className="rail-brand"><span className="brand-mark"><Sparkles size={19} /></span><strong>RemindUp</strong></div>
-        <Navigation view={view} setView={setView} openTask={() => openTask()} desktop />
+        <Navigation view={view} setView={navigate} openTask={() => openTask()} desktop />
         <div className="rail-foot">
           <span className="avatar">TH</span>
           <div><strong>Không gian cá nhân</strong><small>Local-first</small></div>
@@ -542,20 +628,23 @@ export default function PlannerApp() {
             <Dashboard
               now={now}
               timeText={timeText}
-              todayTasks={todayTasks}
+              selectedDate={selectedDate}
+              selectedTasks={selectedTasks}
               nextTask={nextTask}
               completion={completion}
-              completedToday={completedToday}
+              completedSelected={completedSelected}
               overdueCount={overdueCount}
               notes={notes}
-              focusSeconds={focusSeconds}
-              focusRunning={focusRunning}
-              setFocusRunning={setFocusRunning}
-              setFocusSeconds={setFocusSeconds}
               toggleTask={toggleTask}
               openTask={openTask}
               openNote={() => setModal("note")}
-              setView={setView}
+              setView={navigate}
+              selectDate={(value) => {
+                setSelectedDate(value);
+                if (value < today) showFeedback("Ngày này đã qua. Bạn có thể xem lại nhưng không thể thêm lịch mới");
+                else showFeedback(value === today ? "Đã trở về hôm nay" : `Đã chọn ${formatShortDate(value)}`);
+              }}
+              showFeedback={showFeedback}
             />
           )}
           {view === "calendar" && (
@@ -564,7 +653,8 @@ export default function PlannerApp() {
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
               toggleTask={toggleTask}
-              openTask={openTask}
+              openTask={(task) => openTask(task, selectedDate)}
+              setToast={showFeedback}
             />
           )}
           {view === "notes" && (
@@ -573,22 +663,27 @@ export default function PlannerApp() {
               query={query}
               openNote={() => setModal("note")}
               refresh={refresh}
-              setToast={setToast}
+              setToast={showFeedback}
             />
           )}
           {view === "settings" && (
             <SettingsView
               dark={dark}
-              setDark={setDark}
+              setDark={(value) => {
+                setDark(value);
+                showFeedback(value ? "Đã bật chế độ tối" : "Đã bật chế độ sáng");
+              }}
               clock24={clock24}
               setClock24={(value) => {
                 setClock24(value);
                 window.localStorage.setItem("remindup-clock24", String(value));
+                showFeedback(value ? "Đã dùng định dạng 24 giờ" : "Đã dùng định dạng 12 giờ");
               }}
               showSeconds={showSeconds}
               setShowSeconds={(value) => {
                 setShowSeconds(value);
                 window.localStorage.setItem("remindup-seconds", String(value));
+                showFeedback(value ? "Đã hiển thị giây" : "Đã ẩn giây");
               }}
               exportData={exportData}
               importRef={importRef}
@@ -604,13 +699,14 @@ export default function PlannerApp() {
       </main>
 
       <nav className="bottom-nav" aria-label="Điều hướng chính">
-        <Navigation view={view} setView={setView} openTask={() => openTask()} />
+        <Navigation view={view} setView={navigate} openTask={() => openTask()} />
       </nav>
 
       {modal === "task" && (
         <TaskModal
           task={editingTask}
           tasks={tasks}
+          initialDate={taskDraftDate}
           close={() => {
             setModal(null);
             setEditingTask(null);
@@ -619,7 +715,7 @@ export default function PlannerApp() {
             await refresh();
             setModal(null);
             setEditingTask(null);
-            setToast(message);
+            showFeedback(message);
           }}
         />
       )}
@@ -629,7 +725,7 @@ export default function PlannerApp() {
           saved={async () => {
             await refresh();
             setModal(null);
-            setToast("Đã lưu ghi chú");
+            showFeedback("Đã lưu ghi chú");
           }}
         />
       )}
@@ -641,17 +737,24 @@ export default function PlannerApp() {
             setPinConfigured(true);
             setLocked(false);
             setModal(null);
-            setToast("Đã bật khóa PIN 6 số");
+            showFeedback("Đã bật khóa PIN 6 số");
           }}
           removed={() => {
             setPinConfigured(false);
             setLocked(false);
             setModal(null);
-            setToast("Đã tắt khóa PIN");
+            showFeedback("Đã tắt khóa PIN");
           }}
         />
       )}
-      {toast && <div className="toast" role="status"><Check size={17} />{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          <Check size={17} />
+          <span>{toast}</span>
+          <button type="button" onClick={() => setToast("")} aria-label="Đóng thông báo"><X size={16} /></button>
+          <i />
+        </div>
+      )}
     </div>
   );
 }
@@ -697,25 +800,196 @@ function Navigation({ view, setView, openTask, desktop = false }: {
   );
 }
 
+function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
+  const [mode, setMode] = useState<ClockMode>("countdown");
+  const [seconds, setSeconds] = useState(25 * 60);
+  const [running, setRunning] = useState(false);
+  const [targetAt, setTargetAt] = useState(0);
+  const [stopwatchBase, setStopwatchBase] = useState(0);
+  const [durationHours, setDurationHours] = useState("0");
+  const [durationMinutes, setDurationMinutes] = useState("25");
+  const [durationSeconds, setDurationSeconds] = useState("0");
+  const [alarmTime, setAlarmTime] = useState("09:00");
+  const completedRef = useRef(false);
+
+  const complete = useCallback(() => {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    setRunning(false);
+    setSeconds(0);
+    pressFeedback([180, 100, 180]);
+    const alarm = mode === "alarm";
+    const message = alarm ? "Báo thức đã đến giờ" : "Đếm ngược đã hoàn thành";
+    onFeedback(message);
+    void showSystemNotification(
+      alarm ? "RemindUp báo thức" : "RemindUp hẹn giờ",
+      alarm ? `Đã đến ${alarmTime}` : "Bộ đếm ngược đã kết thúc",
+      `clock-${mode}`,
+    );
+  }, [alarmTime, mode, onFeedback]);
+
+  useEffect(() => {
+    if (!running || !targetAt) return;
+
+    const update = () => {
+      if (mode === "stopwatch") {
+        setSeconds(stopwatchBase + Math.floor((Date.now() - targetAt) / 1000));
+        return;
+      }
+      const remaining = Math.max(0, Math.ceil((targetAt - Date.now()) / 1000));
+      setSeconds(remaining);
+      if (remaining === 0) complete();
+    };
+
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
+  }, [complete, mode, running, stopwatchBase, targetAt]);
+
+  const changeMode = (nextMode: ClockMode) => {
+    setRunning(false);
+    setTargetAt(0);
+    completedRef.current = false;
+    setMode(nextMode);
+    setSeconds(nextMode === "countdown" ? 25 * 60 : 0);
+    setStopwatchBase(0);
+    pressFeedback();
+    onFeedback(
+      nextMode === "countdown" ? "Đã mở bộ đếm ngược" :
+      nextMode === "stopwatch" ? "Đã mở đồng hồ bấm giờ" :
+      "Đã mở báo thức",
+    );
+  };
+
+  const applyDuration = () => {
+    const total =
+      Math.min(99, Math.max(0, Number(durationHours) || 0)) * 3600 +
+      Math.min(59, Math.max(0, Number(durationMinutes) || 0)) * 60 +
+      Math.min(59, Math.max(0, Number(durationSeconds) || 0));
+    if (total <= 0) {
+      onFeedback("Hãy đặt thời lượng lớn hơn 0 giây");
+      return;
+    }
+    setRunning(false);
+    setTargetAt(0);
+    setSeconds(total);
+    completedRef.current = false;
+    onFeedback(`Đã đặt hẹn giờ ${formatTimer(total)}`);
+  };
+
+  const startOrPause = () => {
+    if (running) {
+      setRunning(false);
+      setTargetAt(0);
+      if (mode === "stopwatch") setStopwatchBase(seconds);
+      onFeedback(mode === "alarm" ? "Đã tạm dừng báo thức" : "Đã tạm dừng đồng hồ");
+      return;
+    }
+
+    completedRef.current = false;
+    if (mode === "alarm") {
+      const [hours, minutes] = alarmTime.split(":").map(Number);
+      const alarmDate = new Date();
+      alarmDate.setHours(hours, minutes, 0, 0);
+      if (alarmDate.getTime() <= Date.now()) alarmDate.setDate(alarmDate.getDate() + 1);
+      setTargetAt(alarmDate.getTime());
+      setSeconds(Math.ceil((alarmDate.getTime() - Date.now()) / 1000));
+      setRunning(true);
+      onFeedback(`Đã đặt báo thức lúc ${alarmTime}`);
+      return;
+    }
+
+    if (mode === "countdown" && seconds <= 0) {
+      onFeedback("Hãy đặt lại thời lượng trước khi bắt đầu");
+      return;
+    }
+    setTargetAt(mode === "countdown" ? Date.now() + seconds * 1000 : Date.now());
+    if (mode === "stopwatch") setStopwatchBase(seconds);
+    setRunning(true);
+    onFeedback(mode === "stopwatch" ? "Đồng hồ bấm giờ đã chạy" : "Bộ đếm ngược đã bắt đầu");
+  };
+
+  const reset = () => {
+    setRunning(false);
+    setTargetAt(0);
+    completedRef.current = false;
+    const initial =
+      Math.min(99, Math.max(0, Number(durationHours) || 0)) * 3600 +
+      Math.min(59, Math.max(0, Number(durationMinutes) || 0)) * 60 +
+      Math.min(59, Math.max(0, Number(durationSeconds) || 0));
+    setSeconds(mode === "countdown" ? initial || 25 * 60 : 0);
+    setStopwatchBase(0);
+    onFeedback("Đã đặt lại đồng hồ");
+  };
+
+  const visibleTime = mode === "alarm" && !running ? alarmTime : formatTimer(seconds);
+
+  return (
+    <section className="timer-card">
+      <div className="card-mini-heading">
+        <span><TimerReset size={18} /> Trung tâm đồng hồ</span>
+        {running && <span className="live-indicator"><i /> Đang chạy</span>}
+      </div>
+      <div className="timer-tabs" role="tablist" aria-label="Chế độ đồng hồ">
+        <button type="button" role="tab" aria-selected={mode === "countdown"} className={mode === "countdown" ? "active" : ""} onClick={() => changeMode("countdown")}><TimerReset size={15} /> Đếm ngược</button>
+        <button type="button" role="tab" aria-selected={mode === "stopwatch"} className={mode === "stopwatch" ? "active" : ""} onClick={() => changeMode("stopwatch")}><Clock3 size={15} /> Đếm tới</button>
+        <button type="button" role="tab" aria-selected={mode === "alarm"} className={mode === "alarm" ? "active" : ""} onClick={() => changeMode("alarm")}><AlarmClock size={15} /> Báo thức</button>
+      </div>
+
+      <strong className="timer-value" aria-live="off">{visibleTime}</strong>
+      <p>
+        {mode === "countdown" ? "Hẹn giờ tùy chỉnh" : mode === "stopwatch" ? "Đồng hồ bấm giờ" : running ? `Báo lúc ${alarmTime}` : "Chọn giờ báo thức"}
+      </p>
+
+      {mode === "countdown" && !running && (
+        <div className="timer-config">
+          <label><span>Giờ</span><input inputMode="numeric" type="number" min="0" max="99" value={durationHours} onChange={(event) => setDurationHours(event.target.value)} /></label>
+          <label><span>Phút</span><input inputMode="numeric" type="number" min="0" max="59" value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} /></label>
+          <label><span>Giây</span><input inputMode="numeric" type="number" min="0" max="59" value={durationSeconds} onChange={(event) => setDurationSeconds(event.target.value)} /></label>
+          <button type="button" onClick={applyDuration}>Áp dụng</button>
+        </div>
+      )}
+
+      {mode === "alarm" && !running && (
+        <label className="alarm-input">
+          <span>Giờ báo</span>
+          <input type="time" value={alarmTime} onChange={(event) => setAlarmTime(event.target.value)} />
+        </label>
+      )}
+
+      <div className="timer-actions">
+        <button type="button" className="timer-main" onClick={startOrPause}>
+          {running ? <Pause size={18} /> : mode === "alarm" ? <BellRing size={18} /> : <Play size={18} />}
+          {running ? "Tạm dừng" : mode === "alarm" ? "Đặt báo thức" : "Bắt đầu"}
+        </button>
+        <button type="button" onClick={reset} aria-label="Đặt lại đồng hồ"><RotateCcw size={18} /></button>
+      </div>
+      <small className="timer-note">Thông báo chính xác nhất khi RemindUp đang mở hoặc còn hoạt động nền.</small>
+    </section>
+  );
+}
+
 function Dashboard(props: {
   now: Date;
   timeText: string;
-  todayTasks: PlannerTask[];
+  selectedDate: string;
+  selectedTasks: PlannerTask[];
   nextTask?: PlannerTask;
   completion: number;
-  completedToday: number;
+  completedSelected: number;
   overdueCount: number;
   notes: PlannerNote[];
-  focusSeconds: number;
-  focusRunning: boolean;
-  setFocusRunning: (value: boolean) => void;
-  setFocusSeconds: (value: number) => void;
   toggleTask: (task: PlannerTask) => void;
-  openTask: (task?: PlannerTask) => void;
+  openTask: (task?: PlannerTask, dueDate?: string) => void;
   openNote: () => void;
   setView: (view: View) => void;
+  selectDate: (value: string) => void;
+  showFeedback: (message: string) => void;
 }) {
   const week = createWeek(props.now);
+  const today = localDateKey(props.now);
+  const selectedIsPast = props.selectedDate < today;
+  const selectedLabel = dateContextLabel(props.selectedDate, today);
   const dateLong = new Intl.DateTimeFormat("vi-VN", {
     weekday: "long",
     day: "numeric",
@@ -738,15 +1012,38 @@ function Dashboard(props: {
 
       <section className="week-strip" aria-label="Bảy ngày gần đây">
         {week.map((date) => {
-          const active = dateKey(date) === localDateKey(props.now);
+          const key = dateKey(date);
+          const active = key === props.selectedDate;
+          const past = key < today;
           return (
-            <button key={date.toISOString()} type="button" className={active ? "active" : ""}>
+            <button
+              key={date.toISOString()}
+              type="button"
+              className={`${active ? "active" : ""} ${past ? "past" : ""}`}
+              onClick={() => props.selectDate(key)}
+              aria-pressed={active}
+              aria-label={`${past ? "Ngày đã qua" : key === today ? "Hôm nay" : "Ngày sắp tới"}, ${formatShortDate(key)}`}
+            >
               <span>{dayNames[date.getDay()]}</span><strong>{date.getDate()}</strong>
               {active && <i />}
             </button>
           );
         })}
       </section>
+
+      <div className={`date-context ${selectedIsPast ? "past" : ""}`}>
+        <div>
+          <CalendarDays size={18} />
+          <span><strong>{selectedLabel}</strong><small>{props.selectedTasks.length} công việc</small></span>
+        </div>
+        {selectedIsPast ? (
+          <span className="date-context-note">Thời gian này đã qua</span>
+        ) : (
+          <button type="button" onClick={() => props.openTask(undefined, props.selectedDate)}>
+            <Plus size={17} /> Thêm công việc
+          </button>
+        )}
+      </div>
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
@@ -779,18 +1076,18 @@ function Dashboard(props: {
 
           <section className="section-block">
             <div className="section-heading">
-              <div><p className="section-kicker">Hôm nay</p><h2>Danh sách công việc</h2></div>
+              <div><p className="section-kicker">{selectedLabel}</p><h2>Danh sách công việc</h2></div>
               <button type="button" className="text-button" onClick={() => props.setView("calendar")}>Mở lịch <ChevronRight size={16} /></button>
             </div>
             <div className="task-list">
-              {props.todayTasks.length ? props.todayTasks.map((task) => (
+              {props.selectedTasks.length ? props.selectedTasks.map((task) => (
                 <TaskCard key={task.id} task={task} toggle={() => props.toggleTask(task)} edit={() => props.openTask(task)} />
               )) : (
                 <EmptyState
-                  icon={Check}
-                  title="Chưa có việc nào hôm nay"
-                  copy="Thêm một việc có thời gian cụ thể để bắt đầu lập kế hoạch."
-                  action={<button className="secondary-button" type="button" onClick={() => props.openTask()}>Thêm công việc</button>}
+                  icon={selectedIsPast ? ArchiveRestore : Check}
+                  title={selectedIsPast ? "Ngày này không có công việc" : "Chưa có việc trong ngày này"}
+                  copy={selectedIsPast ? "Bạn đang xem một ngày đã qua. Không thể tạo lịch mới cho thời điểm này." : "Thêm một việc có thời gian cụ thể để bắt đầu lập kế hoạch."}
+                  action={!selectedIsPast ? <button className="secondary-button" type="button" onClick={() => props.openTask(undefined, props.selectedDate)}>Thêm công việc</button> : undefined}
                 />
               )}
             </div>
@@ -799,26 +1096,15 @@ function Dashboard(props: {
 
         <aside className="dashboard-side">
           <section className="metric-card">
-            <div className="metric-title"><span className="metric-icon"><Sparkles size={17} /></span><div><p>Nhịp hôm nay</p><strong>{props.completion}%</strong></div></div>
+            <div className="metric-title"><span className="metric-icon"><Sparkles size={17} /></span><div><p>Tiến độ ngày chọn</p><strong>{props.completion}%</strong></div></div>
             <div className="metric-grid">
-              <div><strong>{props.completedToday}</strong><span>Đã xong</span></div>
-              <div><strong>{props.todayTasks.length}</strong><span>Tổng việc</span></div>
+              <div><strong>{props.completedSelected}</strong><span>Đã xong</span></div>
+              <div><strong>{props.selectedTasks.length}</strong><span>Tổng việc</span></div>
               <div><strong>{props.overdueCount}</strong><span>Quá hạn</span></div>
             </div>
           </section>
 
-          <section className="timer-card">
-            <div className="card-mini-heading"><span><TimerReset size={18} /> Pomodoro</span><button type="button" aria-label="Tùy chọn hẹn giờ"><MoreHorizontal size={18} /></button></div>
-            <strong className="timer-value">{pad(Math.floor(props.focusSeconds / 60))}:{pad(props.focusSeconds % 60)}</strong>
-            <p>Phiên tập trung / 25 phút</p>
-            <div className="timer-actions">
-              <button type="button" className="timer-main" onClick={() => props.setFocusRunning(!props.focusRunning)}>
-                {props.focusRunning ? <Pause size={18} /> : <Play size={18} />}
-                {props.focusRunning ? "Tạm dừng" : "Bắt đầu"}
-              </button>
-              <button type="button" onClick={() => { props.setFocusRunning(false); props.setFocusSeconds(25 * 60); }} aria-label="Đặt lại hẹn giờ"><RotateCcw size={18} /></button>
-            </div>
-          </section>
+          <ClockCard onFeedback={props.showFeedback} />
 
           <section className="notes-card">
             <div className="card-mini-heading"><span><FileText size={18} /> Ghi chú ghim</span><button type="button" onClick={props.openNote} aria-label="Tạo ghi chú"><Plus size={18} /></button></div>
@@ -849,26 +1135,41 @@ function TaskCard({ task, toggle, edit }: { task: PlannerTask; toggle: () => voi
   );
 }
 
-function CalendarView({ tasks, selectedDate, setSelectedDate, toggleTask, openTask }: {
+function CalendarView({ tasks, selectedDate, setSelectedDate, toggleTask, openTask, setToast }: {
   tasks: PlannerTask[];
   selectedDate: string;
   setSelectedDate: (value: string) => void;
   toggleTask: (task: PlannerTask) => void;
   openTask: (task?: PlannerTask) => void;
+  setToast: (value: string) => void;
 }) {
   const selected = new Date(`${selectedDate}T00:00:00`);
   const week = createWeek(selected);
+  const today = localDateKey();
+  const selectedIsPast = selectedDate < today;
   const dayTasks = tasks.filter((task) => task.dueDate === selectedDate).sort((a, b) => a.startTime.localeCompare(b.startTime));
   const moveDay = (offset: number) => {
     const date = new Date(selected);
     date.setDate(date.getDate() + offset);
     setSelectedDate(dateKey(date));
   };
+  const selectDay = (value: string) => {
+    setSelectedDate(value);
+    if (value < today) setToast("Ngày này đã qua. Bạn chỉ có thể xem lại công việc");
+    else setToast(value === today ? "Đã trở về hôm nay" : `Đã chọn ${formatShortDate(value)}`);
+  };
+  const addToSelectedDay = () => {
+    if (selectedIsPast) {
+      setToast("Thời gian này đã cũ. Hãy chọn hôm nay hoặc một ngày trong tương lai");
+      return;
+    }
+    openTask();
+  };
   return (
     <section>
       <div className="page-heading">
         <div><p className="eyebrow">Theo ngày</p><h1>Lịch của bạn</h1><p>Xem nhanh thời gian bận và khoảng trống trong ngày.</p></div>
-        <button className="primary-button" type="button" onClick={() => openTask()}><Plus size={18} /> Tạo lịch</button>
+        <button className="primary-button" type="button" aria-disabled={selectedIsPast} onClick={addToSelectedDay}><Plus size={18} /> Tạo lịch</button>
       </div>
       <div className="calendar-toolbar">
         <button type="button" onClick={() => moveDay(-7)} aria-label="Tuần trước"><ChevronLeft size={19} /></button>
@@ -880,14 +1181,14 @@ function CalendarView({ tasks, selectedDate, setSelectedDate, toggleTask, openTa
           const key = dateKey(date);
           const count = tasks.filter((task) => task.dueDate === key).length;
           return (
-            <button key={key} type="button" className={key === selectedDate ? "active" : ""} onClick={() => setSelectedDate(key)}>
+            <button key={key} type="button" className={`${key === selectedDate ? "active" : ""} ${key < today ? "past" : ""}`} onClick={() => selectDay(key)} aria-pressed={key === selectedDate}>
               <span>{dayNames[date.getDay()]}</span><strong>{date.getDate()}</strong>{count > 0 && <i>{count}</i>}
             </button>
           );
         })}
       </div>
       <div className="timeline-card">
-        <div className="timeline-head"><div><strong>{new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(selected)}</strong><span>{dayTasks.length} hoạt động</span></div><button type="button" onClick={() => setSelectedDate(localDateKey())}>Hôm nay</button></div>
+        <div className="timeline-head"><div><strong>{new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(selected)}</strong><span>{dayTasks.length} hoạt động{selectedIsPast ? " / đã qua" : ""}</span></div><button type="button" onClick={() => selectDay(today)}>Hôm nay</button></div>
         {dayTasks.length ? (
           <div className="timeline-list">
             {dayTasks.map((task) => (
@@ -899,7 +1200,12 @@ function CalendarView({ tasks, selectedDate, setSelectedDate, toggleTask, openTa
             ))}
           </div>
         ) : (
-          <EmptyState icon={CalendarDays} title="Ngày này chưa có lịch" copy="Đây là một khoảng trống tốt để nghỉ ngơi hoặc lên kế hoạch mới." action={<button className="secondary-button" type="button" onClick={() => openTask()}>Thêm hoạt động</button>} />
+          <EmptyState
+            icon={CalendarDays}
+            title={selectedIsPast ? "Ngày này không có lịch" : "Ngày này chưa có lịch"}
+            copy={selectedIsPast ? "Thời gian này đã qua và chỉ được dùng để xem lại." : "Đây là một khoảng trống tốt để nghỉ ngơi hoặc lên kế hoạch mới."}
+            action={!selectedIsPast ? <button className="secondary-button" type="button" onClick={addToSelectedDay}>Thêm hoạt động</button> : undefined}
+          />
         )}
       </div>
     </section>
@@ -997,7 +1303,7 @@ function SettingsView({
         <section className="settings-card">
           <div className="settings-title"><span><ShieldCheck size={20} /></span><div><h2>Dữ liệu & quyền riêng tư</h2><p>Dữ liệu hiện được lưu cục bộ bằng IndexedDB.</p></div></div>
           <button className="setting-action" type="button" onClick={requestStorage}><ShieldCheck size={19} /><span><strong>Bảo vệ lưu trữ</strong><small>Yêu cầu trình duyệt không tự dọn dữ liệu</small></span><ChevronRight size={18} /></button>
-          <button className="setting-action" type="button" onClick={requestNotifications}><Bell size={19} /><span><strong>Quyền thông báo</strong><small>Bật nhắc việc khi ứng dụng đang hoạt động</small></span><ChevronRight size={18} /></button>
+          <button className="setting-action" type="button" onClick={requestNotifications}><Bell size={19} /><span><strong>Quyền thông báo</strong><small>iPhone cần cài app vào Màn hình chính trước khi bật</small></span><ChevronRight size={18} /></button>
           <button className="setting-action" type="button" onClick={configurePin}><KeyRound size={19} /><span><strong>{pinConfigured ? "Đổi hoặc tắt PIN" : "Thiết lập PIN 6 số"}</strong><small>Tự khóa sau 5 phút hoặc khi rời ứng dụng</small></span><ChevronRight size={18} /></button>
           {pinConfigured && <button className="setting-action" type="button" onClick={lockNow}><LockKeyhole size={19} /><span><strong>Khóa ngay</strong><small>Yêu cầu PIN khi mở lại</small></span><ChevronRight size={18} /></button>}
         </section>
@@ -1176,15 +1482,16 @@ function PinModal({ configured, close, saved, removed }: {
   );
 }
 
-function TaskModal({ task, tasks, close, saved }: {
+function TaskModal({ task, tasks, initialDate, close, saved }: {
   task: PlannerTask | null;
   tasks: PlannerTask[];
+  initialDate: string;
   close: () => void;
   saved: (message: string) => void;
 }) {
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const [dueDate, setDueDate] = useState(task?.dueDate ?? localDateKey());
+  const [dueDate, setDueDate] = useState(task?.dueDate ?? initialDate);
   const [startTime, setStartTime] = useState(task?.startTime ?? "09:00");
   const [endTime, setEndTime] = useState(task?.endTime ?? "10:00");
   const [priority, setPriority] = useState<Priority>(task?.priority ?? "medium");
@@ -1204,6 +1511,8 @@ function TaskModal({ task, tasks, close, saved }: {
   const [repeatCount, setRepeatCount] = useState(String(task?.repeatRule?.count ?? 10));
   const [notice, setNotice] = useState("");
   const [allowConflict, setAllowConflict] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1213,6 +1522,10 @@ function TaskModal({ task, tasks, close, saved }: {
     }
     if (parseMinutes(endTime) <= parseMinutes(startTime)) {
       setNotice("Giờ kết thúc phải sau giờ bắt đầu.");
+      return;
+    }
+    if (!task && new Date(`${dueDate}T${endTime}:00`).getTime() <= Date.now()) {
+      setNotice("Thời gian này đã cũ. Hãy chọn ngày và giờ trong tương lai.");
       return;
     }
     if (repeatFrequency === "weekly" && repeatWeekdays.size === 0) {
@@ -1275,39 +1588,56 @@ function TaskModal({ task, tasks, close, saved }: {
       updatedAt: timestamp,
       completedAt: task?.completedAt ?? null,
     };
-    await db.tasks.put(row);
-    await db.history.add({
-      entityType: "task",
-      entityId: row.id,
-      action: task ? "Chỉnh sửa" : "Tạo mới",
-      detail: row.title,
-      createdAt: timestamp,
-    });
-    await saved(task ? "Đã cập nhật công việc" : "Đã tạo công việc mới");
+    setBusy(true);
+    try {
+      await db.tasks.put(row);
+      await db.history.add({
+        entityType: "task",
+        entityId: row.id,
+        action: task ? "Chỉnh sửa" : "Tạo mới",
+        detail: row.title,
+        createdAt: timestamp,
+      });
+      await saved(task ? "Đã cập nhật công việc" : "Đã tạo công việc mới");
+    } catch {
+      setBusy(false);
+      setNotice("Không thể lưu công việc. Hãy kiểm tra dung lượng thiết bị và thử lại.");
+    }
   };
 
   const remove = async () => {
     if (!task) return;
-    await db.tasks.delete(task.id);
-    await db.history.add({
-      entityType: "task",
-      entityId: task.id,
-      action: "Xóa",
-      detail: task.title,
-      createdAt: new Date().toISOString(),
-    });
-    await saved("Đã xóa công việc");
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setNotice("Công việc sẽ bị xóa vĩnh viễn. Nhấn “Xác nhận xóa” để tiếp tục.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await db.tasks.delete(task.id);
+      await db.history.add({
+        entityType: "task",
+        entityId: task.id,
+        action: "Xóa",
+        detail: task.title,
+        createdAt: new Date().toISOString(),
+      });
+      await saved("Đã xóa công việc");
+    } catch {
+      setBusy(false);
+      setNotice("Không thể xóa công việc. Hãy thử lại.");
+    }
   };
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && close()}>
       <section className="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="task-modal-title">
-        <div className="modal-head"><div><p className="eyebrow">{task ? "Cập nhật kế hoạch" : "Thêm vào hôm nay"}</p><h2 id="task-modal-title">{task ? "Chỉnh sửa công việc" : "Công việc mới"}</h2></div><button type="button" onClick={close} aria-label="Đóng"><X size={21} /></button></div>
+        <div className="modal-head"><div><p className="eyebrow">{task ? "Cập nhật kế hoạch" : `Thêm vào ${formatShortDate(initialDate)}`}</p><h2 id="task-modal-title">{task ? "Chỉnh sửa công việc" : "Công việc mới"}</h2></div><button type="button" onClick={close} aria-label="Đóng"><X size={21} /></button></div>
         <form onSubmit={submit}>
           <label className="form-field full"><span>Tiêu đề *</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nhập tên công việc" /></label>
           <label className="form-field full"><span>Mô tả</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Thêm nội dung giúp bạn bắt đầu dễ hơn…" /></label>
           <div className="form-grid">
-            <label className="form-field"><span>Ngày</span><input type="date" value={dueDate} onChange={(event) => { setDueDate(event.target.value); setAllowConflict(false); }} /></label>
+            <label className="form-field"><span>Ngày</span><input type="date" min={task ? undefined : localDateKey()} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setAllowConflict(false); setNotice(""); }} /></label>
             <label className="form-field"><span>Danh mục</span><select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label className="form-field"><span>Bắt đầu</span><input type="time" value={startTime} onChange={(event) => { setStartTime(event.target.value); setAllowConflict(false); }} /></label>
             <label className="form-field"><span>Kết thúc</span><input type="time" value={endTime} onChange={(event) => { setEndTime(event.target.value); setAllowConflict(false); }} /></label>
@@ -1370,10 +1700,10 @@ function TaskModal({ task, tasks, close, saved }: {
           </div>
           {notice && <div className="form-notice"><AlarmClock size={18} /><span>{notice}</span></div>}
           <div className="modal-actions">
-            {task && <button className="danger-button" type="button" onClick={remove}><Trash2 size={17} /> Xóa</button>}
+            {task && <button className="danger-button" type="button" disabled={busy} onClick={remove}><Trash2 size={17} /> {confirmDelete ? "Xác nhận xóa" : "Xóa"}</button>}
             <span />
-            <button className="secondary-button" type="button" onClick={close}>Hủy</button>
-            <button className="primary-button" type="submit">{allowConflict ? "Vẫn lưu" : task ? "Lưu thay đổi" : "Tạo công việc"}</button>
+            <button className="secondary-button" type="button" disabled={busy} onClick={close}>Hủy</button>
+            <button className="primary-button" type="submit" disabled={busy}>{busy ? "Đang lưu…" : allowConflict ? "Vẫn lưu" : task ? "Lưu thay đổi" : "Tạo công việc"}</button>
           </div>
         </form>
       </section>
