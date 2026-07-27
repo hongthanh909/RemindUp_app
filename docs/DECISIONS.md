@@ -71,6 +71,11 @@ Last updated: 2026-07-27
 - The local clock supports countdown, count-up stopwatch, and a daily alarm
   target. It uses wall-clock timestamps so it catches up after short background
   suspension instead of trusting interval ticks.
+- The installed PWA respects iPhone safe areas. Mobile form controls use at
+  least 16px text so focusing a time or duration field does not trigger Safari
+  auto-zoom.
+- When a timer or alarm finishes while RemindUp is still active, show both an
+  in-app alert and a system notification when permission has been granted.
 - Background delivery uses Web Push and is best-effort.
 - On iOS/iPadOS, notification permission is requested only after the PWA has
   been added to the Home Screen and the user taps the notification action.

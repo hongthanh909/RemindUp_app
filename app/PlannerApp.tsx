@@ -36,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   db,
   localDateKey,
@@ -810,6 +811,7 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
   const [durationMinutes, setDurationMinutes] = useState("25");
   const [durationSeconds, setDurationSeconds] = useState("0");
   const [alarmTime, setAlarmTime] = useState("09:00");
+  const [clockAlert, setClockAlert] = useState<"alarm" | "countdown" | null>(null);
   const completedRef = useRef(false);
 
   const complete = useCallback(() => {
@@ -819,6 +821,7 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
     setSeconds(0);
     pressFeedback([180, 100, 180]);
     const alarm = mode === "alarm";
+    setClockAlert(alarm ? "alarm" : "countdown");
     const message = alarm ? "Báo thức đã đến giờ" : "Đếm ngược đã hoàn thành";
     onFeedback(message);
     void showSystemNotification(
@@ -877,7 +880,7 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
     onFeedback(`Đã đặt hẹn giờ ${formatTimer(total)}`);
   };
 
-  const startOrPause = () => {
+  const startOrPause = async () => {
     if (running) {
       setRunning(false);
       setTargetAt(0);
@@ -888,7 +891,27 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
 
     completedRef.current = false;
     if (mode === "alarm") {
+      if ("Notification" in window && Notification.permission === "default") {
+        const permission = await Notification.requestPermission();
+        onFeedback(
+          permission === "granted"
+            ? "Đã bật thông báo cho báo thức"
+            : "Báo thức vẫn chạy trong ứng dụng nhưng chưa thể hiện trên màn hình khóa",
+        );
+      }
       const [hours, minutes] = alarmTime.split(":").map(Number);
+      if (
+        !alarmTime ||
+        !Number.isInteger(hours) ||
+        !Number.isInteger(minutes) ||
+        hours < 0 ||
+        hours > 23 ||
+        minutes < 0 ||
+        minutes > 59
+      ) {
+        onFeedback("Hãy chọn giờ báo thức hợp lệ");
+        return;
+      }
       const alarmDate = new Date();
       alarmDate.setHours(hours, minutes, 0, 0);
       if (alarmDate.getTime() <= Date.now()) alarmDate.setDate(alarmDate.getDate() + 1);
@@ -925,7 +948,8 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
   const visibleTime = mode === "alarm" && !running ? alarmTime : formatTimer(seconds);
 
   return (
-    <section className="timer-card">
+    <>
+      <section className="timer-card">
       <div className="card-mini-heading">
         <span><TimerReset size={18} /> Trung tâm đồng hồ</span>
         {running && <span className="live-indicator"><i /> Đang chạy</span>}
@@ -953,19 +977,50 @@ function ClockCard({ onFeedback }: { onFeedback: (message: string) => void }) {
       {mode === "alarm" && !running && (
         <label className="alarm-input">
           <span>Giờ báo</span>
-          <input type="time" value={alarmTime} onChange={(event) => setAlarmTime(event.target.value)} />
+          <input
+            type="time"
+            step="60"
+            value={alarmTime}
+            aria-label="Chọn giờ báo thức"
+            onChange={(event) => setAlarmTime(event.target.value)}
+          />
         </label>
       )}
 
       <div className="timer-actions">
-        <button type="button" className="timer-main" onClick={startOrPause}>
+        <button type="button" className="timer-main" onClick={() => void startOrPause()}>
           {running ? <Pause size={18} /> : mode === "alarm" ? <BellRing size={18} /> : <Play size={18} />}
           {running ? "Tạm dừng" : mode === "alarm" ? "Đặt báo thức" : "Bắt đầu"}
         </button>
         <button type="button" onClick={reset} aria-label="Đặt lại đồng hồ"><RotateCcw size={18} /></button>
       </div>
       <small className="timer-note">Thông báo chính xác nhất khi RemindUp đang mở hoặc còn hoạt động nền.</small>
-    </section>
+      </section>
+      {clockAlert && typeof document !== "undefined" && createPortal(
+        <div className="clock-alert-backdrop" role="presentation">
+          <section
+            className="clock-alert"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="clock-alert-title"
+          >
+            <span className="clock-alert-icon"><BellRing size={26} /></span>
+            <div>
+              <strong id="clock-alert-title">
+                {clockAlert === "alarm" ? "Báo thức đã đến giờ" : "Đếm ngược đã hoàn thành"}
+              </strong>
+              <p>
+                {clockAlert === "alarm"
+                  ? `RemindUp đã báo lúc ${alarmTime}.`
+                  : "Bộ đếm ngược của bạn đã kết thúc."}
+              </p>
+            </div>
+            <button type="button" onClick={() => setClockAlert(null)}>Đã biết</button>
+          </section>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
